@@ -73,6 +73,13 @@
                             <input type="password" class="form-control" id="senha_email_clinica" name="senha_email_clinica" value="{{ senha_email }}" placeholder="Insira a senha de app aqui">
                         </div>
 
+                        <h6 class="mb-3 border-bottom pb-2">Lembrete de Retorno de Procedimento</h6>
+                        <div class="mb-4">
+                            <label for="dias_reenvio_lembrete_retorno" class="form-label">Reenviar lembrete de retorno a cada (dias)</label>
+                            <input type="number" min="1" class="form-control" id="dias_reenvio_lembrete_retorno" name="dias_reenvio_lembrete_retorno" value="{{ dias_reenvio_retorno }}">
+                            <small class="text-muted">Quando um paciente passa do prazo configurado em um serviço (ex: Botox a cada 90 dias) e ainda não reagendou, o lembrete é reenviado nessa cadência até ele agendar de novo.</small>
+                        </div>
+
                         <div class="d-grid">
                             <button type="submit" class="btn btn-primary"><i class="bi bi-save me-2"></i>Salvar Preferências</button>
                         </div>

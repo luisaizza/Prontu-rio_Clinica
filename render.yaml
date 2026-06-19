@@ -39,7 +39,7 @@ services:
     plan: starter
     schedule: "0 */4 * * *"
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "flask lembretes-diarios"
+    startCommand: "flask lembretes-diarios && flask lembretes-retorno"
     envVars:
       - key: FLASK_APP
         value: app_clinica.py

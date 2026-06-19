@@ -317,6 +317,9 @@ class ServicoEstetico(db.Model):
     preco = db.Column(db.Float, default=0.0)
     ativo = db.Column(db.Boolean, default=True)
     data_criacao = db.Column(db.DateTime, default=datetime.now)
+    # Dias após o atendimento finalizado para enviar lembrete de retorno (ex: 90 para Botox).
+    # None/0 desativa o lembrete de retorno para este serviço.
+    dias_lembrete_retorno = db.Column(db.Integer, nullable=True)
     agendamentos = db.relationship('AgendamentoServico', backref='servico', lazy=True, cascade="all, delete-orphan")
 
     def __repr__(self):
@@ -391,7 +394,11 @@ class AgendamentoServico(db.Model):
     # Campos para lembretes (CORREÇÃO)
     data_hora_lembrete_enviado = db.Column(db.DateTime, nullable=True)
     metodo_lembrete = db.Column(db.String(50), nullable=True)
-    
+
+    # Lembrete de retorno (recorrência do procedimento): marca o último envio
+    # referente a este atendimento finalizado, para controlar a cadência de reenvio.
+    data_ultimo_lembrete_retorno_enviado = db.Column(db.DateTime, nullable=True)
+
     # Relacionamentos
     paciente = db.relationship('Paciente', backref='agendamentos_servicos')
 
@@ -1818,6 +1825,7 @@ def editar_servico(servico_id):
         servico.descricao = request.form.get("descricao", servico.descricao)
         servico.duracao_minutos = request.form.get("duracao_minutos", servico.duracao_minutos, type=int)
         servico.preco = request.form.get("preco", servico.preco, type=float)
+        servico.dias_lembrete_retorno = request.form.get("dias_lembrete_retorno", type=int)
         servico.ativo = 'ativo' in request.form
 
         db.session.commit()
@@ -1860,20 +1868,22 @@ def novo_servico():
         descricao = request.form.get("descricao")
         duracao = request.form.get("duracao_minutos", type=int, default=60)
         preco = request.form.get("preco", type=float, default=0.0)
-        
+        dias_lembrete_retorno = request.form.get("dias_lembrete_retorno", type=int)
+
         if not nome:
             flash("Nome do serviço é obrigatório.", "warning")
             return render_template("novo_servico.html")
-        
+
         if ServicoEstetico.query.filter_by(nome_servico=nome).first():
             flash("Um serviço com este nome já existe.", "danger")
             return render_template("novo_servico.html")
-        
+
         novo = ServicoEstetico(
             nome_servico=nome,
             descricao=descricao,
             duracao_minutos=duracao,
-            preco=preco
+            preco=preco,
+            dias_lembrete_retorno=dias_lembrete_retorno
         )
         
         db.session.add(novo)
@@ -2020,7 +2030,8 @@ def personalizar_tema():
         cor_cabecalho = request.form.get("cor_cabecalho")
         email_clinica = request.form.get("email_clinica")
         senha_email = request.form.get("senha_email_clinica")
-        
+        dias_reenvio_retorno = request.form.get("dias_reenvio_lembrete_retorno", type=int)
+
         if cor_novos:
             conf = Configuracao.query.filter_by(chave='cor_novos_pacientes').first()
             if not conf:
@@ -2048,7 +2059,14 @@ def personalizar_tema():
                 conf = Configuracao(chave='senha_email_clinica')
                 db.session.add(conf)
             conf.valor = senha_email
-            
+
+        if dias_reenvio_retorno and dias_reenvio_retorno > 0:
+            conf = Configuracao.query.filter_by(chave='dias_reenvio_lembrete_retorno').first()
+            if not conf:
+                conf = Configuracao(chave='dias_reenvio_lembrete_retorno')
+                db.session.add(conf)
+            conf.valor = str(dias_reenvio_retorno)
+
         db.session.commit()
         flash("Aparência atualizada com sucesso!", "success")
 
@@ -2066,9 +2084,13 @@ def personalizar_tema():
     
     conf_senha = Configuracao.query.filter_by(chave='senha_email_clinica').first()
     senha_email = conf_senha.valor if conf_senha else ''
-    
-    return render_template("personalizar_tema.html", cor_atual=cor_atual, cor_cabecalho=cor_cabecalho, 
-                           email_clinica=email_clinica, senha_email=senha_email)
+
+    conf_reenvio = Configuracao.query.filter_by(chave='dias_reenvio_lembrete_retorno').first()
+    dias_reenvio_retorno = conf_reenvio.valor if conf_reenvio else '7'
+
+    return render_template("personalizar_tema.html", cor_atual=cor_atual, cor_cabecalho=cor_cabecalho,
+                           email_clinica=email_clinica, senha_email=senha_email,
+                           dias_reenvio_retorno=dias_reenvio_retorno)
 
 @app.route("/uploads/<filename>")
 @login_required
@@ -2407,6 +2429,107 @@ def verificar_lembretes_diarios():
             logger.error(f"Erro ao verificar lembretes: {e}")
 
 
+def verificar_lembretes_retorno():
+    """Verifica pacientes na hora de repetir um procedimento e envia lembrete.
+
+    Diferente de `verificar_lembretes_diarios` (que avisa sobre um agendamento
+    já marcado), esta função identifica pacientes que fizeram um serviço com
+    recorrência configurada (`ServicoEstetico.dias_lembrete_retorno`) e que já
+    passaram do prazo para repeti-lo, mas ainda não reagendaram. O lembrete se
+    repete periodicamente (cadência global em `Configuracao.dias_reenvio_lembrete_retorno`,
+    padrão 7 dias) até o paciente ter um novo agendamento futuro do mesmo
+    serviço (com status diferente de 'cancelado').
+
+    Executa uma única passada; é chamada pelo comando `flask lembretes-retorno`,
+    agendado via cron (ver render.yaml).
+    """
+    with app.app_context():
+        try:
+            conf_cadencia = Configuracao.query.filter_by(chave='dias_reenvio_lembrete_retorno').first()
+            try:
+                dias_reenvio = int(conf_cadencia.valor) if conf_cadencia and conf_cadencia.valor else 7
+            except ValueError:
+                dias_reenvio = 7
+
+            agora = datetime.now()
+            servicos = ServicoEstetico.query.filter(
+                ServicoEstetico.dias_lembrete_retorno.isnot(None),
+                ServicoEstetico.dias_lembrete_retorno > 0
+            ).all()
+
+            for servico in servicos:
+                # Último atendimento finalizado de cada paciente para este serviço
+                subq = db.session.query(
+                    AgendamentoServico.paciente_id,
+                    func.max(AgendamentoServico.data_agendamento).label('ultima_data')
+                ).filter(
+                    AgendamentoServico.servico_id == servico.id,
+                    AgendamentoServico.status == 'finalizado'
+                ).group_by(AgendamentoServico.paciente_id).subquery()
+
+                ultimos_atendimentos = db.session.query(AgendamentoServico).join(
+                    subq,
+                    db.and_(
+                        AgendamentoServico.paciente_id == subq.c.paciente_id,
+                        AgendamentoServico.data_agendamento == subq.c.ultima_data
+                    )
+                ).filter(
+                    AgendamentoServico.servico_id == servico.id,
+                    AgendamentoServico.status == 'finalizado'
+                ).all()
+
+                for atendimento in ultimos_atendimentos:
+                    data_prevista = atendimento.data_agendamento + timedelta(days=servico.dias_lembrete_retorno)
+                    if agora < data_prevista:
+                        continue
+
+                    ja_reagendou = AgendamentoServico.query.filter(
+                        AgendamentoServico.paciente_id == atendimento.paciente_id,
+                        AgendamentoServico.servico_id == servico.id,
+                        AgendamentoServico.status != 'cancelado',
+                        AgendamentoServico.data_agendamento > atendimento.data_agendamento
+                    ).first()
+                    if ja_reagendou:
+                        continue
+
+                    ultimo_envio = atendimento.data_ultimo_lembrete_retorno_enviado
+                    if ultimo_envio and (agora - ultimo_envio).days < dias_reenvio:
+                        continue
+
+                    paciente = atendimento.paciente
+                    if not paciente.email:
+                        continue
+
+                    assunto = f"Hora de renovar: {servico.nome_servico}"
+                    corpo = f"""
+                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+                        <div style="background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 1px solid #e0e0e0;">
+                            <img src="cid:logo_clinica" alt="Logo Clínica" style="max-height: 80px;">
+                        </div>
+                        <div style="padding: 30px; background-color: #ffffff;">
+                            <h2 style="color: #0d6efd; margin-top: 0; text-align: center;">Está na hora de retornar!</h2>
+                            <p style="color: #555; font-size: 16px;">Olá, <strong>{paciente.nome_completo}</strong>!</p>
+                            <p style="color: #555; font-size: 16px;">Já faz um tempo desde o seu último atendimento de <strong>{servico.nome_servico}</strong>. Que tal agendar a manutenção?</p>
+
+                            <div style="background-color: #e7f1ff; border-left: 4px solid #0d6efd; padding: 15px; margin: 20px 0;">
+                                <p style="margin: 5px 0; color: #333;"><strong>Serviço:</strong> {servico.nome_servico}</p>
+                                <p style="margin: 5px 0; color: #333;"><strong>Último atendimento:</strong> {atendimento.data_agendamento.strftime('%d/%m/%Y')}</p>
+                            </div>
+
+                            <p style="color: #555; font-size: 14px; text-align: center;">Entre em contato com a clínica para agendar seu retorno.</p>
+                        </div>
+                        <div style="background-color: #f8f9fa; padding: 15px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #e0e0e0;">
+                            <p style="margin: 0;">&copy; {datetime.now().year} Nome da Sua Clínica. Todos os direitos reservados.</p>
+                        </div>
+                    </div>
+                    """
+                    if enviar_email(paciente.email, assunto, corpo):
+                        atendimento.data_ultimo_lembrete_retorno_enviado = agora
+                        db.session.commit()
+        except Exception as e:
+            logger.error(f"Erro ao verificar lembretes de retorno: {e}")
+
+
 # --- COMANDOS CLI (flask <comando>) ---
 # Tabelas são criadas/atualizadas via `flask db upgrade` (Flask-Migrate) e o
 # primeiro usuário admin via a rota /setup (gated por SETUP_ENABLED). Nada
@@ -2440,6 +2563,16 @@ def lembretes_diarios_command():
     não por uma thread de longa duração dentro do processo web.
     """
     verificar_lembretes_diarios()
+
+
+@app.cli.command("lembretes-retorno")
+def lembretes_retorno_command():
+    """Verifica e envia, uma única vez, os lembretes de retorno de procedimento.
+
+    Pensado para ser chamado por um job de cron externo (ex: Render Cron Job),
+    junto com `lembretes-diarios`.
+    """
+    verificar_lembretes_retorno()
 
 
 if __name__ == "__main__":

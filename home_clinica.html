@@ -1,0 +1,206 @@
+{% extends "base_clinica.html" %}
+{% block title %}Lista de Pacientes{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Cabeçalho com Estatísticas Rápidas (apenas para admin) -->
+    {% if current_user.perfil == 'admin' %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card dashboard-card">
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-md-3 mb-3">
+                            <h3 class="text-primary">{{ pacientes|length }}</h3>
+                            <p class="mb-0 text-muted">Pacientes Cadastrados</p>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <h3 class="text-success">{{ pacientes|selectattr('atendimentos')|list|length }}</h3>
+                            <p class="mb-0 text-muted">Com Atendimentos</p>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <h3 class="text-info">{{ pacientes|selectattr('agendamentos_servicos')|list|length }}</h3>
+                            <p class="mb-0 text-muted">Com Agendamentos</p>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <h3 class="{{ config.get('cor_novos_pacientes', 'text-success') }}">{{ pacientes|selectattr('data_cadastro', 'greaterthan', (now - timedelta(days=30)))|list|length }}</h3>
+                            <p class="mb-0 text-muted">Novos (30 dias)</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Cabeçalho da Página -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="mb-1"><i class="bi bi-people-fill me-2 text-primary"></i>Pacientes Cadastrados</h2>
+            <p class="text-muted mb-0">Gerencie os pacientes da clínica</p>
+        </div>
+        <div class="d-flex gap-2">
+            {% if current_user.tem_permissao('agendar') %}
+            <a href="{{ url_for('novo_paciente', agendar=True) }}" class="btn btn-primary btn-lg">
+                <i class="bi bi-person-plus-fill me-2"></i>Agendar (Novo Paciente)
+            </a>
+            {% else %}
+            <a href="{{ url_for('novo_paciente') }}" class="btn btn-success btn-lg">
+                <i class="bi bi-plus-circle me-2"></i>Novo Paciente
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Barra de Busca -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="GET" action="{{ url_for('home') }}">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-8">
+                        <label for="search" class="form-label fw-semibold">Buscar Paciente</label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" class="form-control" id="search" name="q" placeholder="Digite o nome do paciente..." value="{{ query or '' }}">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <button class="btn btn-primary w-100" type="submit">
+                            <i class="bi bi-search me-2"></i>Buscar
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {% if pacientes %}
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-list-ul me-2"></i>Lista de Pacientes</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th scope="col"><i class="bi bi-person me-2"></i>Nome Completo</th>
+                                <th scope="col" class="d-none d-md-table-cell"><i class="bi bi-calendar me-2"></i>Data de Nascimento</th>
+                                <th scope="col" class="d-none d-lg-table-cell"><i class="bi bi-telephone me-2"></i>Contato</th>
+                                <th scope="col" class="text-center"><i class="bi bi-gear me-2"></i>Ações</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for paciente in pacientes %}
+                            <tr>
+                                <td>
+                                    <div class="d-flex align-items-center">
+                                        <div class="avatar-circle me-3 bg-primary text-white">
+                                            {{ paciente.nome_completo[0]|upper }}
+                                        </div>
+                                        <div>
+                                            <strong>{{ paciente.nome_completo }}</strong>
+                                            {% if paciente.cpf %}
+                                            <br><small class="text-muted">CPF: {{ paciente.cpf }}</small>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="d-none d-md-table-cell">
+                                    {{ paciente.data_nascimento | dateformat if paciente.data_nascimento else '<span class="text-muted">Não informada</span>' | safe }}
+                                </td>
+                                <td class="d-none d-lg-table-cell">
+                                    {% if paciente.telefone %}
+                                    <i class="bi bi-telephone me-1"></i>{{ paciente.telefone }}
+                                    {% else %}
+                                    <span class="text-muted">Não informado</span>
+                                    {% endif %}
+                                    {% if paciente.email %}
+                                    <br><i class="bi bi-envelope me-1"></i>{{ paciente.email }}
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    <div class="btn-group" role="group">
+                                        <a href="{{ url_for('ver_paciente', paciente_id=paciente.id) }}" class="btn btn-sm btn-outline-primary" title="Ver Prontuário" data-bs-toggle="tooltip">
+                                            <i class="bi bi-eye-fill"></i>
+                                        </a>
+                                        <a href="{{ url_for('agendar_servico', paciente_id=paciente.id) }}" class="btn btn-sm btn-primary" title="Agendar Serviço" data-bs-toggle="tooltip">
+                                            <i class="bi bi-calendar-plus"></i>
+                                        </a>
+                                        {% if current_user.tem_permissao('gerenciar_pacientes') %}
+                                        <a href="{{ url_for('editar_paciente', paciente_id=paciente.id) }}" class="btn btn-sm btn-outline-warning" title="Editar Paciente" data-bs-toggle="tooltip">
+                                            <i class="bi bi-pencil-square"></i>
+                                        </a>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% if pacientes.has_next or pacientes.has_prev %}
+            <div class="card-footer">
+                <nav aria-label="Navegação de páginas">
+                    <ul class="pagination justify-content-center mb-0">
+                        {% if pacientes.has_prev %}
+                        <li class="page-item">
+                            <a class="page-link" href="{{ url_for('home', page=pacientes.prev_num, q=query) }}">
+                                <i class="bi bi-chevron-left"></i> Anterior
+                            </a>
+                        </li>
+                        {% endif %}
+                        
+                        {% for page_num in pacientes.iter_pages() %}
+                        {% if page_num %}
+                        <li class="page-item {% if page_num == pacientes.page %}active{% endif %}">
+                            <a class="page-link" href="{{ url_for('home', page=page_num, q=query) }}">{{ page_num }}</a>
+                        </li>
+                        {% else %}
+                        <li class="page-item disabled"><span class="page-link">...</span></li>
+                        {% endif %}
+                        {% endfor %}
+                        
+                        {% if pacientes.has_next %}
+                        <li class="page-item">
+                            <a class="page-link" href="{{ url_for('home', page=pacientes.next_num, q=query) }}">
+                                Próximo <i class="bi bi-chevron-right"></i>
+                            </a>
+                        </li>
+                        {% endif %}
+                    </ul>
+                </nav>
+            </div>
+            {% endif %}
+        </div>
+    {% else %}
+        <div class="card">
+            <div class="card-body text-center py-5">
+                <i class="bi bi-people display-1 text-muted mb-3"></i>
+                <h4 class="text-muted">Nenhum paciente encontrado</h4>
+                <p class="text-muted mb-4">
+                    {% if query %}
+                    Nenhum paciente encontrado com o termo "{{ query }}".
+                    {% else %}
+                    Ainda não há pacientes cadastrados na clínica.
+                    {% endif %}
+                </p>
+                <a href="{{ url_for('novo_paciente') }}" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-2"></i>Cadastrar Primeiro Paciente
+                </a>
+            </div>
+        </div>
+    {% endif %}
+</div>
+
+<script>
+// Inicializar tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+</script>
+{% endblock %}

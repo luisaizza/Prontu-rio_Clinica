@@ -1,0 +1,45 @@
+{% extends "base_clinica.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-header">
+            <h2>Nova Anamnese para {{ paciente.nome_completo }}</h2>
+        </div>
+        <div class="card-body">
+            <form method="POST">
+                <div class="mb-3">
+                    <label for="queixa_principal" class="form-label">Queixa Principal</label>
+                    <textarea class="form-control" id="queixa_principal" name="queixa_principal" rows="3"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="historico_doenca_atual" class="form-label">Histórico da Doença Atual</label>
+                    <textarea class="form-control" id="historico_doenca_atual" name="historico_doenca_atual" rows="3"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="historico_patologico_pregresso" class="form-label">Histórico Patológico Pregresso</label>
+                    <textarea class="form-control" id="historico_patologico_pregresso" name="historico_patologico_pregresso" rows="3"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="historico_familiar" class="form-label">Histórico Familiar</label>
+                    <textarea class="form-control" id="historico_familiar" name="historico_familiar" rows="3"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="habitos_vida" class="form-label">Hábitos de Vida</label>
+                    <textarea class="form-control" id="habitos_vida" name="habitos_vida" rows="3"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="medicamentos_uso" class="form-label">Medicamentos em Uso</label>
+                    <textarea class="form-control" id="medicamentos_uso" name="medicamentos_uso" rows="3"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label for="alergias" class="form-label">Alergias</label>
+                    <textarea class="form-control" id="alergias" name="alergias" rows="3"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">Salvar Anamnese</button>
+                <a href="{{ url_for('ver_paciente', paciente_id=paciente.id) }}" class="btn btn-secondary">Cancelar</a>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

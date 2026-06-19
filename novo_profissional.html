@@ -1,0 +1,45 @@
+{% extends "base_clinica.html" %}
+{% block title %}Novo Perfil Profissional{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h2 class="h4 mb-0">Criar Novo Perfil Profissional</h2>
+                </div>
+                <div class="card-body">
+                    <p class="card-text text-muted">Associe um usuário existente com perfil 'esteta' a um novo perfil profissional.</p>
+                    <hr>
+
+                    <form method="POST" action="{{ url_for('novo_profissional') }}">
+                        {{ form.hidden_tag() }} {# ESSENCIAL PARA O TOKEN CSRF #}
+
+                        <div class="mb-3">
+                            <label for="usuario_id" class="form-label">Usuário</label>
+                            {{ form.usuario_id(class="form-select", id="usuario_id") }}
+                            <div class="form-text">Apenas usuários com perfil 'esteta' e sem perfil profissional são listados.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="especialidades" class="form-label">Especialidades</label>
+                            {{ form.especialidades(class="form-control", id="especialidades", placeholder="Ex: Botox, Preenchimento, Laser") }}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="telefone_contato" class="form-label">Telefone de Contato</label>
+                            {{ form.telefone_contato(class="form-control", id="telefone_contato", placeholder="(XX) XXXXX-XXXX") }}
+                        </div>
+
+                        <div class="d-flex justify-content-end gap-2 mt-4">
+                            <a href="{{ url_for('listar_profissionais') }}" class="btn btn-outline-secondary">Cancelar</a>
+                            {{ form.submit(class="btn btn-primary") }}
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "base_clinica.html" %}
+{% block title %}Editar Profissional - {{ profissional.usuario.username }}{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h2 class="h4 mb-0">Editar Perfil de {{ profissional.usuario.username.upper() }}</h2>
+                </div>
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('editar_profissional', profissional_id=profissional.id) }}">
+                        {{ form.hidden_tag() }} {# ESSENCIAL PARA O TOKEN CSRF #}
+
+                        <div class="mb-3">
+                            <label for="especialidades" class="form-label">Especialidades</label>
+                            {{ form.especialidades(class="form-control", value=profissional.especialidades or '') }}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="telefone_contato" class="form-label">Telefone de Contato</label>
+                            {{ form.telefone_contato(class="form-control", value=profissional.telefone_contato or '') }}
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="disponibilidade_status" class="form-label">Status de Disponibilidade</label>
+                            <select class="form-select" id="disponibilidade_status" name="disponibilidade_status" value="{{ profissional.disponibilidade_status }}">
+                                <option value="disponível" {% if profissional.disponibilidade_status == 'disponível' %}selected{% endif %}>Disponível</option>
+                                <option value="indisponível" {% if profissional.disponibilidade_status == 'indisponível' %}selected{% endif %}>Indisponível</option>
+                                <option value="de_ferias" {% if profissional.disponibilidade_status == 'de_ferias' %}selected{% endif %}>De Férias</option>
+                            </select>
+                        </div>
+
+                        <div class="row" id="ferias-fields" style="display: {% if profissional.disponibilidade_status == 'de_ferias' %}flex{% else %}none{% endif %};">
+                            <div class="col-md-6 mb-3">
+                                <label for="data_inicio_ferias" class="form-label">Início das Férias</label>
+                                <input type="date" class="form-control" id="data_inicio_ferias" name="data_inicio_ferias" value="{{ profissional.data_inicio_ferias.strftime('%Y-%m-%d') if profissional.data_inicio_ferias else '' }}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="data_fim_ferias" class="form-label">Fim das Férias</label>
+                                <input type="date" class="form-control" id="data_fim_ferias" name="data_fim_ferias" value="{{ profissional.data_fim_ferias.strftime('%Y-%m-%d') if profissional.data_fim_ferias else '' }}">
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-end gap-2 mt-4">
+                            <a href="{{ url_for('listar_profissionais') }}" class="btn btn-outline-secondary">Cancelar</a>
+                            {{ form.submit(class="btn btn-primary") }}
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const statusSelect = document.getElementById('disponibilidade_status');
+    const feriasFields = document.getElementById('ferias-fields');
+
+    statusSelect.addEventListener('change', function() {
+        feriasFields.style.display = this.value === 'de_ferias' ? 'flex' : 'none';
+    });
+});
+</script>
+{% endblock %}

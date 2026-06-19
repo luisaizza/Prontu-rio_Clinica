@@ -1,0 +1,55 @@
+{% extends "base_clinica.html" %}
+
+{% block title %}Login - Clínica Estética{% endblock %}
+
+{% block content %}
+<div class="login-page">
+    <div class="container">
+        <div class="row justify-content-center align-items-center min-vh-100">
+            <div class="col-md-6 col-lg-5 col-xl-4">
+                <div class="login-container">
+                    <div class="text-center mb-4">
+                        <div class="logo-container mb-3">
+                            <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo" class="img-fluid" style="max-height: 100px;">
+                        </div>
+                        <h2 class="fw-bold text-primary mb-2">Clínica Estética</h2>
+                        <p class="text-muted">Bem-vinda de volta! Faça login para continuar.</p>
+                    </div>
+
+                    <form method="POST" action="{{ url_for('login') }}">
+                        {{ form.hidden_tag() }}
+                        
+                        <div class="form-floating mb-3">
+                            <input type="text" class="form-control" id="username" name="username" placeholder="Usuário" required>
+                            <label for="username"><i class="bi bi-person me-2"></i>Usuário</label>
+                        </div>
+                        
+                        <div class="form-floating mb-4">
+                            <input type="password" class="form-control" id="password" name="password" placeholder="Senha" required>
+                            <label for="password"><i class="bi bi-lock me-2"></i>Senha</label>
+                        </div>
+                        
+                        <div class="d-flex justify-content-end mb-3">
+                            <a href="#" class="text-decoration-none small" onclick="alert('Por favor, entre em contato com o administrador para redefinir sua senha.'); return false;">Esqueci minha senha</a>
+                        </div>
+                        
+                        <div class="d-grid mb-3">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-box-arrow-in-right me-2"></i>Fazer Login
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="text-center mb-3">
+                        <small class="text-muted">Não tem uma conta? <a href="{{ url_for('registro') }}" class="text-decoration-none">Criar nova conta</a></small>
+                    </div>
+
+                    <div class="text-center">
+                        <small class="text-muted">Sistema Seguro &copy; {{ current_year }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "base_clinica.html" %}
+{% block title %}Meu Perfil{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+    <div class="col-md-7">
+        <div class="card shadow-sm">
+            <div class="card-header">
+                <h4><i class="bi bi-person-badge-fill"></i> Meu Perfil</h4>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-secondary">
+                    <p class="mb-1"><strong>Usuário:</strong> {{ current_user.username }}</p>
+                    <p class="mb-0"><strong>Perfil:</strong> {{ current_user.perfil.upper() }}</p>
+                </div>
+
+                <hr>
+
+                <h5 class="mt-4">Alterar Senha</h5>
+                <p class="text-muted">Para sua segurança, digite sua senha atual antes de definir uma nova.</p>
+
+                <form method="POST" action="{{ url_for('perfil') }}">
+                    {{ csrf_token() }}
+                    <div class="mb-3">
+                        <label for="senha_atual" class="form-label">Senha Atual</label>
+                        <input type="password" class="form-control" id="senha_atual" name="senha_atual" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="nova_senha" class="form-label">Nova Senha</label>
+                        <input type="password" class="form-control" id="nova_senha" name="nova_senha" required minlength="6">
+                        <div class="form-text">A senha deve ter no mínimo 6 caracteres.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirmar_senha" class="form-label">Confirmar Nova Senha</label>
+                        <input type="password" class="form-control" id="confirmar_senha" name="confirmar_senha" required minlength="6">
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-key-fill"></i> Alterar Senha
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,77 @@
+{% extends "base_clinica.html" %}
+{% block title %}Gerenciar Profissionais{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-people"></i> Gerenciar Profissionais</h2>
+    <a href="{{ url_for('novo_profissional') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> Cadastrar Novo Profissional
+    </a>
+</div>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover table-striped mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Nome de Usuário</th>
+                    <th>Especialidades</th>
+                    <th>Telefone</th>
+                    <th>Status</th>
+                    <th class="text-end">Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for profissional in profissionais.items %}
+                <tr>
+                    <td><strong>{{ profissional.usuario.username }}</strong></td>
+                    <td>{{ profissional.especialidades or 'Não definido' }}</td>
+                    <td>{{ profissional.telefone_contato or 'Não informado' }}</td>
+                    <td>
+                        <span class="badge bg-{% if profissional.disponibilidade_status == 'disponível' %}success{% elif profissional.disponibilidade_status == 'de_ferias' %}warning{% else %}secondary{% endif %}">
+                            {{ profissional.disponibilidade_status | capitalize }}
+                        </span>
+                    </td>
+                    <td class="text-end">
+                        <div class="btn-group" role="group">
+                            <a href="{{ url_for('gerenciar_horarios_profissional', profissional_id=profissional.id) }}" class="btn btn-sm btn-info" title="Gerenciar Horários">
+                                <i class="bi bi-clock-fill"></i> Horários
+                            </a>
+                            <a href="{{ url_for('editar_profissional', profissional_id=profissional.id) }}" class="btn btn-sm btn-warning" title="Editar Profissional">
+                                <i class="bi bi-pencil-square"></i> Editar
+                            </a>
+                            <form action="{{ url_for('deletar_profissional', profissional_id=profissional.id) }}" method="POST" class="d-inline" onsubmit="return confirm('Tem certeza que deseja excluir o perfil profissional de {{ profissional.usuario.username }}? Esta ação não pode ser desfeita.');">
+                                <button type="submit" class="btn btn-sm btn-danger" title="Excluir Profissional">
+                                    <i class="bi bi-trash-fill"></i> Excluir
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center">Nenhum profissional encontrado.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Paginação -->
+{% if profissionais.pages > 1 %}
+<nav class="mt-4 d-flex justify-content-center">
+    <ul class="pagination">
+        {% for page_num in profissionais.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if page_num %}
+                <li class="page-item {% if profissionais.page == page_num %}active{% endif %}">
+                    <a class="page-link" href="{{ url_for('listar_profissionais', pagina=page_num) }}">{{ page_num }}</a>
+                </li>
+            {% else %}
+                <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+        {% endfor %}
+    </ul>
+</nav>
+{% endif %}
+{% endblock %}

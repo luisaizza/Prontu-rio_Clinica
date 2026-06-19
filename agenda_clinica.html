@@ -1,0 +1,266 @@
+{% extends "base_clinica.html" %}
+
+{% block title %}Agenda de Atendimentos{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Cabeçalho -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="mb-1 text-gradient">
+                <i class="bi bi-calendar-event me-3"></i>Agenda de Atendimentos
+            </h1>
+            <p class="text-muted mb-0">Gerencie todos os agendamentos da clínica</p>
+        </div>
+        <div class="d-flex gap-2">
+            <a href="{{ url_for('agenda_calendario') }}" class="btn btn-outline-primary">
+                <i class="bi bi-calendar-week me-2"></i>Visualizar Calendário
+            </a>
+            {% if current_user.tem_permissao('agendar') %}
+            <a href="{{ url_for('novo_paciente') }}" class="btn btn-primary">
+                <i class="bi bi-plus-circle me-2"></i>Novo Agendamento
+            </a>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Cards de Resumo -->
+    <div class="row mb-4">
+        <div class="col-md-3 mb-3">
+            <div class="card dashboard-card text-center h-100">
+                <div class="card-body">
+                    <i class="bi bi-calendar-day display-4 text-primary mb-2"></i>
+                    <h4 class="text-primary">{{ agendamentos|selectattr('status', 'equalto', 'agendado')|list|length }}</h4>
+                    <p class="mb-0">Agendados</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card dashboard-card text-center h-100">
+                <div class="card-body">
+                    <i class="bi bi-check-circle display-4 text-info mb-2"></i>
+                    <h4 class="text-info">{{ agendamentos|selectattr('status', 'equalto', 'confirmado')|list|length }}</h4>
+                    <p class="mb-0">Confirmados</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card dashboard-card text-center h-100">
+                <div class="card-body">
+                    <i class="bi bi-play-circle display-4 text-warning mb-2"></i>
+                    <h4 class="text-warning">{{ agendamentos|selectattr('status', 'equalto', 'em_andamento')|list|length }}</h4>
+                    <p class="mb-0">Em Andamento</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 mb-3">
+            <div class="card dashboard-card text-center h-100">
+                <div class="card-body">
+                    <i class="bi bi-check2-circle display-4 text-success mb-2"></i>
+                    <h4 class="text-success">{{ agendamentos|selectattr('status', 'equalto', 'finalizado')|list|length }}</h4>
+                    <p class="mb-0">Finalizados</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filtros Avançados -->
+    <div class="card mb-4 shadow-soft">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="bi bi-funnel me-2"></i>Filtros de Pesquisa</h6>
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="filtro_status" class="form-label fw-semibold">
+                        <i class="bi bi-flag text-primary me-2"></i>Status
+                    </label>
+                    <select class="form-select" id="filtro_status" name="status">
+                        <option value="">Todos os Status</option>
+                        <option value="agendado">Agendado</option>
+                        <option value="confirmado">Confirmado</option>
+                        <option value="em_andamento">Em Andamento</option>
+                        <option value="finalizado">Finalizado</option>
+                        <option value="cancelado">Cancelado</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="filtro_profissional" class="form-label fw-semibold">
+                        <i class="bi bi-person text-primary me-2"></i>Profissional
+                    </label>
+                    <select class="form-select" id="filtro_profissional" name="profissional">
+                        <option value="">Todos os Profissionais</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label for="filtro_data" class="form-label fw-semibold">
+                        <i class="bi bi-calendar-date text-primary me-2"></i>Data
+                    </label>
+                    <input type="date" class="form-control" id="filtro_data" name="data">
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-search me-2"></i>Aplicar Filtros
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Tabela de Agendamentos -->
+    {% if agendamentos.items %}
+    <div class="table-responsive">
+        <table class="table table-hover">
+            <thead class="table-light">
+                <tr>
+                    <th>Data/Hora</th>
+                    <th>Paciente</th>
+                    <th>Serviço</th>
+                    <th>Profissional</th>
+                    <th>Status</th>
+                    <th>Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for agendamento in agendamentos.items %}
+                <tr class="{% if agendamento.status == 'cancelado' %}text-muted table-danger{% elif agendamento.status == 'finalizado' %}table-success{% elif agendamento.status == 'em_andamento' %}table-warning{% endif %}">
+                    <td>
+                        <strong>{{ agendamento.data_agendamento|datetimeformat('%d/%m/%Y %H:%M') }}</strong>
+                    </td>
+                    <td>
+                        <a href="{{ url_for('ver_paciente', paciente_id=agendamento.paciente_id) }}">
+                            {{ agendamento.paciente.nome_completo }}
+                        </a>
+                    </td>
+                    <td>
+                        <span class="badge bg-info">{{ agendamento.servico.nome_servico }}</span>
+                    </td>
+                    <td>{{ agendamento.profissional.usuario.username }}</td>
+                    <td>
+                        {% if agendamento.status == 'agendado' %}
+                        <span class="badge bg-primary">Agendado</span>
+                        {% elif agendamento.status == 'confirmado' %}
+                        <span class="badge bg-success">Confirmado</span>
+                        {% elif agendamento.status == 'em_andamento' %}
+                        <span class="badge bg-warning text-dark">Em Andamento</span>
+                        {% elif agendamento.status == 'finalizado' %}
+                        <span class="badge bg-success">Finalizado</span>
+                        {% elif agendamento.status == 'cancelado' %}
+                        <span class="badge bg-danger">Cancelado</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="btn-group btn-group-sm" role="group">
+                            {% if agendamento.status == 'agendado' %}
+                            <form method="POST" action="{{ url_for('confirmar_agendamento', agendamento_id=agendamento.id) }}" style="display:inline;">
+                                <button type="submit" class="btn btn-success btn-sm" title="Confirmar">
+                                    <i class="bi bi-check-circle"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+
+                            {% if agendamento.status == 'confirmado' and agendamento.tempo_restante() > 0 %}
+                            <form method="POST" action="{{ url_for('iniciar_atendimento', agendamento_id=agendamento.id) }}" style="display:inline;">
+                                <button type="submit" class="btn btn-warning btn-sm" title="Iniciar Atendimento">
+                                    <i class="bi bi-play-circle"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+
+                            {% if agendamento.status == 'em_andamento' %}
+                            <form method="POST" action="{{ url_for('finalizar_atendimento', agendamento_id=agendamento.id) }}" style="display:inline;">
+                                <button type="submit" class="btn btn-success btn-sm" title="Finalizar">
+                                    <i class="bi bi-check2-circle"></i>
+                                </button>
+                            </form>
+                            {% endif %}
+
+                            {% if agendamento.pode_cancelar() %}
+                            <button class="btn btn-danger btn-sm" data-bs-toggle="modal" data-bs-target="#cancelModal{{ agendamento.id }}" title="Cancelar">
+                                <i class="bi bi-x-circle"></i>
+                            </button>
+                            {% endif %}
+
+                            <a href="{{ url_for('ver_paciente', paciente_id=agendamento.paciente_id) }}" class="btn btn-info btn-sm" title="Ver Paciente">
+                                <i class="bi bi-eye"></i>
+                            </a>
+
+                            <!-- CORREÇÃO: Adicionado botão de Editar/Reagendar -->
+                            {% if agendamento.status not in ['finalizado', 'cancelado'] %}
+                            <a href="{{ url_for('editar_agendamento', agendamento_id=agendamento.id) }}" class="btn btn-secondary btn-sm" title="Editar/Reagendar">
+                                <i class="bi bi-pencil-square"></i>
+                            </a>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+
+                <!-- Modal para cancelar -->
+                <div class="modal fade" id="cancelModal{{ agendamento.id }}" tabindex="-1">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Cancelar Agendamento</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>Tem certeza que deseja cancelar o agendamento de <strong>{{ agendamento.paciente.nome_completo }}</strong> para <strong>{{ agendamento.data_agendamento|datetimeformat }}</strong>?</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Voltar</button>
+                                <form method="POST" action="{{ url_for('cancelar_agendamento', agendamento_id=agendamento.id) }}" style="display:inline;">
+                                    <button type="submit" class="btn btn-danger">Cancelar Agendamento</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Paginação -->
+    {% if agendamentos.pages > 1 %}
+    <nav class="d-flex justify-content-center mt-4">
+        <ul class="pagination">
+            {% if agendamentos.has_prev %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('agenda', pagina=agendamentos.prev_num) }}">Anterior</a>
+            </li>
+            {% endif %}
+
+            {% for page_num in agendamentos.iter_pages() %}
+                {% if page_num %}
+                    {% if page_num == agendamentos.page %}
+                    <li class="page-item active">
+                        <span class="page-link">{{ page_num }}</span>
+                    </li>
+                    {% else %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('agenda', pagina=page_num) }}">{{ page_num }}</a>
+                    </li>
+                    {% endif %}
+                {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">...</span>
+                </li>
+                {% endif %}
+            {% endfor %}
+
+            {% if agendamentos.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('agenda', pagina=agendamentos.next_num) }}">Próxima</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+
+    {% else %}
+    <div class="alert alert-info" role="alert">
+        <i class="bi bi-info-circle"></i> Nenhum agendamento encontrado para os próximos 30 dias.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

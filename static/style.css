@@ -1,0 +1,384 @@
+/*
+    ARQUIVO DE ESTILO PRINCIPAL
+    Este arquivo foi refatorado para usar variáveis CSS,
+    permitindo a personalização de temas em tempo real.
+*/
+
+:root {
+    /* Paleta de Cores Sofisticada e Feminina (Tema "Elegance Rosa") */
+    --cor-primaria: #9c27b0;          /* Roxo elegante para botões e cabeçalhos */
+    --cor-primaria-hover: #7b1fa2;   /* Tom mais escuro para hover */
+    --cor-secundaria: #fce4ec;        /* Rosa claro para fundos e detalhes */
+    --cor-fundo: #fafafa;             /* Branco suave para o fundo geral */
+    --cor-fundo-card: #ffffff;        /* Branco para cards e containers */
+    --cor-texto-principal: #212529;   /* Preto suave para textos */
+    --cor-texto-secundario: #6c757d;  /* Cinza para textos de apoio */
+    --cor-borda: #e1bee7;             /* Rosa claro para bordas */
+    --cor-sucesso: #4caf50;
+    --cor-aviso: #ff9800;
+    --cor-erro: #f44336;
+    --cor-info: #00bcd4;
+    --cor-acento: #e91e63;            /* Rosa vibrante para destaques */
+}
+
+/* --- ESTILOS GLOBAIS --- */
+body {
+    background-color: var(--cor-fundo);
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    color: var(--cor-texto-principal);
+    line-height: 1.6;
+}
+
+/* --- COMPONENTES REUTILIZÁVEIS --- */
+.card {
+    background-color: var(--cor-fundo-card);
+    border-color: var(--cor-borda);
+    border-radius: 15px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.card-header {
+    background: linear-gradient(135deg, var(--cor-primaria), var(--cor-acento));
+    color: white;
+    border-radius: 15px 15px 0 0 !important;
+    border: none;
+}
+
+.btn-primary {
+    background: linear-gradient(135deg, var(--cor-primaria), var(--cor-acento));
+    border: none;
+    border-radius: 25px;
+    padding: 10px 20px;
+    font-weight: 600;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(156, 39, 176, 0.3);
+}
+
+.btn-primary:hover {
+    background: linear-gradient(135deg, var(--cor-primaria-hover), var(--cor-acento));
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(156, 39, 176, 0.4);
+}
+
+.btn-secondary {
+    background-color: var(--cor-secundaria);
+    border: 1px solid var(--cor-borda);
+    border-radius: 25px;
+    color: var(--cor-texto-principal);
+    transition: all 0.3s ease;
+}
+
+.btn-secondary:hover {
+    background-color: var(--cor-borda);
+    transform: translateY(-1px);
+}
+
+.table {
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.table thead th {
+    background: linear-gradient(135deg, var(--cor-primaria), var(--cor-acento));
+    color: white;
+    border: none;
+}
+
+.table tbody tr:hover {
+    background-color: var(--cor-secundaria);
+}
+
+.badge {
+    border-radius: 20px;
+    font-weight: 500;
+}
+
+.form-control {
+    border: 2px solid var(--cor-borda);
+    border-radius: 10px;
+    padding: 10px 15px;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.form-control:focus {
+    border-color: var(--cor-primaria);
+    box-shadow: 0 0 0 3px rgba(156, 39, 176, 0.1);
+}
+
+.navbar {
+    background-color: var(--cor-fundo-card) !important;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    border-bottom: 1px solid var(--cor-borda);
+}
+
+.navbar-brand {
+    font-weight: 700;
+    color: var(--cor-primaria) !important;
+}
+
+.nav-link {
+    color: var(--cor-texto-principal) !important;
+    font-weight: 500;
+    transition: color 0.3s ease;
+}
+
+.nav-link:hover {
+    color: var(--cor-primaria) !important;
+}
+
+.alert {
+    border-radius: 10px;
+    border: none;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.footer {
+    background: linear-gradient(135deg, var(--cor-secundaria), var(--cor-fundo));
+    color: var(--cor-texto-secundario);
+    text-align: center;
+    padding: 20px;
+    margin-top: 50px;
+}
+
+/* --- PÁGINA DE LOGIN --- */
+.login-page {
+    background: linear-gradient(135deg, var(--cor-secundaria) 0%, var(--cor-fundo) 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.login-container {
+    background: var(--cor-fundo-card);
+    border-radius: 20px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+    padding: 2.5rem;
+    text-align: center;
+    max-width: 400px;
+    width: 100%;
+}
+
+.login-container .logo-container {
+    margin-bottom: 1rem;
+}
+
+.login-container h2 {
+    color: var(--cor-primaria);
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+
+.login-container p {
+    color: var(--cor-texto-secundario);
+    font-size: 0.95rem;
+}
+
+/* --- FORMULÁRIOS --- */
+.form-group {
+    margin-bottom: 1.5rem;
+    text-align: left;
+}
+
+.form-group label {
+    font-weight: 500;
+    color: var(--cor-texto-secundario);
+}
+
+.form-control {
+    border: 1px solid var(--cor-borda);
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--cor-primaria);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--cor-primaria) 20%, transparent);
+}
+
+.btn-submit {
+    width: 100%;
+    padding: 0.8rem;
+    background-color: var(--cor-primaria);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+
+.btn-submit:hover {
+    background-color: var(--cor-primaria-hover);
+}
+
+/* --- ALERTAS / FLASH MESSAGES --- */
+.alert {
+    padding: 1rem;
+    margin-bottom: 1rem;
+    border-radius: 4px;
+    text-align: center;
+    border: 1px solid transparent;
+}
+
+.alert-danger {
+    background-color: color-mix(in srgb, var(--cor-erro) 15%, transparent);
+    color: var(--cor-erro);
+    border-color: color-mix(in srgb, var(--cor-erro) 30%, transparent);
+}
+
+.alert-success {
+    background-color: color-mix(in srgb, var(--cor-sucesso) 15%, transparent);
+    color: var(--cor-sucesso);
+    border-color: color-mix(in srgb, var(--cor-sucesso) 30%, transparent);
+}
+
+.alert-warning {
+    background-color: color-mix(in srgb, var(--cor-aviso) 15%, transparent);
+    color: #664d03;
+    border-color: color-mix(in srgb, var(--cor-aviso) 30%, transparent);
+}
+
+.alert-info {
+    background-color: color-mix(in srgb, var(--cor-info) 15%, transparent);
+    color: #055160;
+    border-color: color-mix(in srgb, var(--cor-info) 30%, transparent);
+}
+
+/* --- DASHBOARD CARDS --- */
+.dashboard-card {
+    border-radius: 15px;
+    border: none;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    overflow: hidden;
+}
+
+.dashboard-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.dashboard-card .card-body {
+    background: linear-gradient(135deg, var(--cor-primaria), var(--cor-acento));
+    color: white;
+}
+
+.dashboard-card .card-footer {
+    background: rgba(255, 255, 255, 0.1);
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    color: white;
+    text-decoration: none;
+    transition: background 0.3s ease;
+}
+
+.dashboard-card .card-footer:hover {
+    background: rgba(255, 255, 255, 0.2);
+    text-decoration: none;
+    color: white;
+}
+
+/* --- AVATAR CIRCLE --- */
+.avatar-circle {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 1.1rem;
+}
+
+/* --- PAGINATION --- */
+.pagination .page-link {
+    color: var(--cor-primaria);
+    border-color: var(--cor-borda);
+    transition: all 0.3s ease;
+}
+
+.pagination .page-link:hover {
+    background-color: var(--cor-secundaria);
+    border-color: var(--cor-primaria);
+    color: var(--cor-primaria);
+}
+
+.pagination .page-item.active .page-link {
+    background-color: var(--cor-primaria);
+    border-color: var(--cor-primaria);
+}
+
+/* --- FORM ELEMENTS --- */
+.form-label {
+    font-weight: 600;
+    color: var(--cor-texto-principal);
+    margin-bottom: 0.5rem;
+}
+
+.form-select, .form-control {
+    border-radius: 8px;
+    border: 2px solid var(--cor-borda);
+    transition: all 0.3s ease;
+}
+
+.form-select:focus, .form-control:focus {
+    border-color: var(--cor-primaria);
+    box-shadow: 0 0 0 3px rgba(156, 39, 176, 0.1);
+}
+
+.btn {
+    border-radius: 8px;
+    font-weight: 500;
+    transition: all 0.3s ease;
+}
+
+.btn-group .btn {
+    border-radius: 6px !important;
+}
+
+/* --- ALERTS --- */
+.alert {
+    border-radius: 10px;
+    border: none;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* --- MODALS --- */
+.modal-content {
+    border-radius: 15px;
+    border: none;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+    border-radius: 15px 15px 0 0;
+    background: linear-gradient(135deg, var(--cor-primaria), var(--cor-acento));
+    color: white;
+    border: none;
+}
+
+/* --- UTILITY CLASSES --- */
+.text-gradient {
+    background: linear-gradient(135deg, var(--cor-primaria), var(--cor-acento));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.shadow-soft {
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1) !important;
+}
+
+.border-soft {
+    border: 1px solid var(--cor-borda) !important;
+}

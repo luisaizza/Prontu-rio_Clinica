@@ -1,0 +1,262 @@
+{% extends "base_clinica.html" %}
+
+{% block title %}Minha Agenda{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row mb-4">
+        <div class="col">
+            <h1 class="mb-3">
+                <i class="bi bi-calendar-check"></i> Minha Agenda
+            </h1>
+            <p class="text-muted">Visualize todos os seus agendamentos e acompanhe o status de cada atendimento.</p>
+        </div>
+    </div>
+
+    <!-- Estatísticas -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h2 class="text-primary">{{ agendamentos.total }}</h2>
+                    <p class="text-muted mb-0">Total de Agendamentos</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h2 class="text-success">{{ agendamentos.items|selectattr('status', 'equalto', 'confirmado')|list|length }}</h2>
+                    <p class="text-muted mb-0">Confirmados</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h2 class="text-warning">{{ agendamentos.items|selectattr('status', 'equalto', 'agendado')|list|length }}</h2>
+                    <p class="text-muted mb-0">Pendentes</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center">
+                <div class="card-body">
+                    <h2 class="text-info">{{ agendamentos.items|selectattr('status', 'equalto', 'finalizado')|list|length }}</h2>
+                    <p class="text-muted mb-0">Finalizados</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Abas de Status -->
+    <ul class="nav nav-tabs mb-4" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="todos-tab" data-bs-toggle="tab" data-bs-target="#todos" type="button" role="tab">
+                Todos ({{ agendamentos.total }})
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="agendado-tab" data-bs-toggle="tab" data-bs-target="#agendado" type="button" role="tab">
+                <span class="badge bg-primary">Agendado</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="confirmado-tab" data-bs-toggle="tab" data-bs-target="#confirmado" type="button" role="tab">
+                <span class="badge bg-success">Confirmado</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="andamento-tab" data-bs-toggle="tab" data-bs-target="#andamento" type="button" role="tab">
+                <span class="badge bg-warning text-dark">Em Andamento</span>
+            </button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link" id="finalizado-tab" data-bs-toggle="tab" data-bs-target="#finalizado" type="button" role="tab">
+                <span class="badge bg-success">Finalizado</span>
+            </button>
+        </li>
+    </ul>
+
+    <!-- Conteúdo das Abas -->
+    <div class="tab-content">
+        <!-- Todos -->
+        <div class="tab-pane fade show active" id="todos" role="tabpanel">
+            {% if agendamentos.items %}
+            <div class="row">
+                {% for agendamento in agendamentos.items %}
+                <div class="col-md-6 mb-3">
+                    <div class="card h-100 {% if agendamento.status == 'cancelado' %}border-danger{% elif agendamento.status == 'finalizado' %}border-success{% elif agendamento.status == 'em_andamento' %}border-warning{% endif %}">
+                        <div class="card-header {% if agendamento.status == 'cancelado' %}bg-danger{% elif agendamento.status == 'finalizado' %}bg-success{% elif agendamento.status == 'em_andamento' %}bg-warning{% elif agendamento.status == 'confirmado' %}bg-success{% else %}bg-primary{% endif %} text-white">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <h6 class="mb-1">{{ agendamento.servico.nome_servico }}</h6>
+                                    <small>{{ agendamento.data_agendamento|datetimeformat('%d/%m/%Y às %H:%M') }}</small>
+                                </div>
+                                <span class="badge bg-white {% if agendamento.status == 'agendado' %}text-primary{% elif agendamento.status == 'confirmado' %}text-success{% elif agendamento.status == 'em_andamento' %}text-warning{% elif agendamento.status == 'finalizado' %}text-success{% elif agendamento.status == 'cancelado' %}text-danger{% endif %}">
+                                    {% if agendamento.status == 'agendado' %}
+                                    Agendado
+                                    {% elif agendamento.status == 'confirmado' %}
+                                    Confirmado
+                                    {% elif agendamento.status == 'em_andamento' %}
+                                    Em Andamento
+                                    {% elif agendamento.status == 'finalizado' %}
+                                    Finalizado
+                                    {% elif agendamento.status == 'cancelado' %}
+                                    Cancelado
+                                    {% endif %}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="row mb-2">
+                                <div class="col-6">
+                                    <small class="text-muted">Profissional</small>
+                                    <p class="mb-0"><strong>{{ agendamento.profissional.usuario.username }}</strong></p>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">Paciente</small>
+                                    <p class="mb-0"><strong>{{ agendamento.paciente.nome_completo }}</strong></p>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-6">
+                                    <small class="text-muted">Duração</small>
+                                    <p class="mb-0">{{ agendamento.servico.duracao_minutos }} minutos</p>
+                                </div>
+                                <div class="col-6">
+                                    <small class="text-muted">Valor</small>
+                                    <p class="mb-0"><strong class="text-success">R$ {{ "%.2f"|format(agendamento.servico.preco) }}</strong></p>
+                                </div>
+                            </div>
+                            {% if agendamento.observacoes %}
+                            <div class="mt-2 pt-2 border-top">
+                                <small class="text-muted">Observações:</small>
+                                <p class="mb-0 small">{{ agendamento.observacoes }}</p>
+                            </div>
+                            {% endif %}
+                        </div>
+                        <div class="card-footer bg-light">
+                            <div class="d-flex gap-2">
+                                <a href="{{ url_for('ver_paciente', paciente_id=agendamento.paciente_id) }}" class="btn btn-sm btn-info" title="Ver Paciente">
+                                    <i class="bi bi-eye"></i> Paciente
+                                </a>
+                                {% if agendamento.pode_cancelar() %}
+                                <button class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#cancelModal{{ agendamento.id }}" title="Cancelar">
+                                    <i class="bi bi-x-circle"></i> Cancelar
+                                </button>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Modal para cancelar -->
+                    <div class="modal fade" id="cancelModal{{ agendamento.id }}" tabindex="-1">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <div class="modal-header bg-danger text-white">
+                                    <h5 class="modal-title">Cancelar Agendamento</h5>
+                                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                                </div>
+                                <div class="modal-body">
+                                    <p>Tem certeza que deseja cancelar este agendamento?</p>
+                                    <div class="alert alert-warning" role="alert">
+                                        <strong>{{ agendamento.servico.nome_servico }}</strong><br>
+                                        {{ agendamento.data_agendamento|datetimeformat }}
+                                    </div>
+                                </div>
+                                <div class="modal-footer">
+                                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Voltar</button>
+                                    <form method="POST" action="{{ url_for('cancelar_agendamento', agendamento_id=agendamento.id) }}" style="display:inline;">
+                                        <button type="submit" class="btn btn-danger">Cancelar Agendamento</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="alert alert-info" role="alert">
+                <i class="bi bi-info-circle"></i> Você não possui agendamentos no momento.
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Por Status -->
+        <div class="tab-pane fade" id="agendado" role="tabpanel">
+            {% set agendados = agendamentos.items|selectattr('status', 'equalto', 'agendado')|list %}
+            {% if agendados %}
+            <p class="text-muted">Você tem {{ agendados|length }} agendamento(s) pendente(s) de confirmação.</p>
+            {% else %}
+            <p class="text-muted">Nenhum agendamento pendente.</p>
+            {% endif %}
+        </div>
+
+        <div class="tab-pane fade" id="confirmado" role="tabpanel">
+            {% set confirmados = agendamentos.items|selectattr('status', 'equalto', 'confirmado')|list %}
+            {% if confirmados %}
+            <p class="text-muted">Você tem {{ confirmados|length }} agendamento(s) confirmado(s).</p>
+            {% else %}
+            <p class="text-muted">Nenhum agendamento confirmado.</p>
+            {% endif %}
+        </div>
+
+        <div class="tab-pane fade" id="andamento" role="tabpanel">
+            {% set andamento = agendamentos.items|selectattr('status', 'equalto', 'em_andamento')|list %}
+            {% if andamento %}
+            <p class="text-muted">Você tem {{ andamento|length }} atendimento(s) em andamento.</p>
+            {% else %}
+            <p class="text-muted">Nenhum atendimento em andamento.</p>
+            {% endif %}
+        </div>
+
+        <div class="tab-pane fade" id="finalizado" role="tabpanel">
+            {% set finalizados = agendamentos.items|selectattr('status', 'equalto', 'finalizado')|list %}
+            {% if finalizados %}
+            <p class="text-muted">Você tem {{ finalizados|length }} atendimento(s) finalizado(s).</p>
+            {% else %}
+            <p class="text-muted">Nenhum atendimento finalizado.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Paginação -->
+    {% if agendamentos.pages > 1 %}
+    <nav class="d-flex justify-content-center mt-4">
+        <ul class="pagination">
+            {% if agendamentos.has_prev %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('minha_agenda', pagina=agendamentos.prev_num) }}">Anterior</a>
+            </li>
+            {% endif %}
+
+            {% for page_num in agendamentos.iter_pages() %}
+                {% if page_num %}
+                    {% if page_num == agendamentos.page %}
+                    <li class="page-item active">
+                        <span class="page-link">{{ page_num }}</span>
+                    </li>
+                    {% else %}
+                    <li class="page-item">
+                        <a class="page-link" href="{{ url_for('minha_agenda', pagina=page_num) }}">{{ page_num }}</a>
+                    </li>
+                    {% endif %}
+                {% else %}
+                <li class="page-item disabled">
+                    <span class="page-link">...</span>
+                </li>
+                {% endif %}
+            {% endfor %}
+
+            {% if agendamentos.has_next %}
+            <li class="page-item">
+                <a class="page-link" href="{{ url_for('minha_agenda', pagina=agendamentos.next_num) }}">Próxima</a>
+            </li>
+            {% endif %}
+        </ul>
+    </nav>
+    {% endif %}
+</div>
+{% endblock %}

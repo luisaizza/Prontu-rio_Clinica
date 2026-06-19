@@ -1,0 +1,13 @@
+{% extends "base_clinica.html" %}
+{% block title %}Erro 404 - Página não encontrada{% endblock %}
+
+{% block content %}
+<div class="text-center py-5">
+    <h1 class="display-1">404</h1>
+    <h2 class="mb-3">Página não encontrada</h2>
+    <p class="lead mb-4">Desculpe, a página que você está procurando não existe.</p>
+    <a href="{{ url_for('home') }}" class="btn btn-primary btn-lg">
+        <i class="bi bi-house"></i> Voltar para a Página Inicial
+    </a>
+</div>
+{% endblock %}

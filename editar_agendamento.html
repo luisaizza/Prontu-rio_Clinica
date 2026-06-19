@@ -1,0 +1,190 @@
+{% extends "base_clinica.html" %}
+
+{% block title %}Editar Agendamento - {{ paciente.nome_completo }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-pencil-square"></i> Editar Agendamento
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <!-- Dados do Paciente -->
+                    <div class="alert alert-light border mb-4">
+                        <div class="row align-items-center">
+                            <div class="col-md-2 text-center">
+                                <div class="avatar-circle bg-primary text-white mx-auto">
+                                    {{ paciente.nome_completo[0]|upper }}
+                                </div>
+                            </div>
+                            <div class="col-md-7">
+                                <h6 class="mb-1">{{ paciente.nome_completo }}</h6>
+                                <p class="mb-0 text-muted small">
+                                    <i class="bi bi-calendar me-1"></i>{{ paciente.data_nascimento | dateformat if paciente.data_nascimento else 'Data não informada' }}
+                                    {% if paciente.telefone %}
+                                    <br><i class="bi bi-telephone me-1"></i>{{ paciente.telefone }}
+                                    {% endif %}
+                                </p>
+                            </div>
+                            <div class="col-md-3 text-end">
+                                <span class="badge 
+                                    {% if agendamento.status == 'agendado' %}bg-primary
+                                    {% elif agendamento.status == 'confirmado' %}bg-info
+                                    {% elif agendamento.status == 'em_andamento' %}bg-warning text-dark
+                                    {% elif agendamento.status == 'finalizado' %}bg-success
+                                    {% elif agendamento.status == 'cancelado' %}bg-danger
+                                    {% else %}bg-secondary{% endif %}">
+                                    {{ agendamento.status|replace('_', ' ')|title }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <form method="POST" action="{{ url_for('editar_agendamento', agendamento_id=agendamento.id) }}">
+                        
+                        <div class="row">
+                            <!-- Serviço -->
+                            <div class="col-md-6 mb-3">
+                                <label for="servico_id" class="form-label">Serviço *</label>
+                                <select class="form-select" id="servico_id" name="servico_id" required>
+                                    <option value="">Selecione...</option>
+                                    {% for servico in servicos %}
+                                    <option value="{{ servico.id }}" 
+                                            data-preco="{{ servico.preco }}"
+                                            {% if servico.id == agendamento.servico_id %}selected{% endif %}>
+                                        {{ servico.nome_servico }} (R$ {{ "%.2f"|format(servico.preco) }})
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <!-- Profissional -->
+                            <div class="col-md-6 mb-3">
+                                <label for="profissional_id" class="form-label">Profissional *</label>
+                                <select class="form-select" id="profissional_id" name="profissional_id" required>
+                                    <option value="">Selecione...</option>
+                                    {% for profissional in profissionais %}
+                                    <option value="{{ profissional.id }}" {% if profissional.id == agendamento.profissional_id %}selected{% endif %}>
+                                        {{ profissional.usuario.username|upper }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <!-- Data -->
+                            <div class="col-md-6 mb-3">
+                                <label for="data_agendamento" class="form-label">Data *</label>
+                                <input type="date" class="form-control" id="data_agendamento" name="data_agendamento" 
+                                       value="{{ agendamento.data_agendamento.strftime('%Y-%m-%d') }}" 
+                                       min="{{ now.strftime('%Y-%m-%d') }}" required>
+                            </div>
+
+                            <!-- Hora -->
+                            <div class="col-md-6 mb-3">
+                                <label for="hora_agendamento" class="form-label">Hora *</label>
+                                <select class="form-select" id="hora_agendamento" name="hora_agendamento" required>
+                                    <option value="{{ agendamento.data_agendamento.strftime('%H:%M') }}" selected>
+                                        {{ agendamento.data_agendamento.strftime('%H:%M') }} (Atual)
+                                    </option>
+                                </select>
+                                <div id="loading-horarios" class="form-text text-primary d-none">
+                                    <span class="spinner-border spinner-border-sm"></span> Buscando horários...
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Observações -->
+                        <div class="mb-4">
+                            <label for="observacoes" class="form-label">Observações</label>
+                            <textarea class="form-control" id="observacoes" name="observacoes" rows="3">{{ agendamento.observacoes or '' }}</textarea>
+                        </div>
+
+                        <!-- Botões -->
+                        <div class="d-flex justify-content-end gap-2">
+                            <a href="{{ url_for('ver_paciente', paciente_id=paciente.id) }}" class="btn btn-outline-secondary">Cancelar</a>
+                            <button type="submit" class="btn btn-primary">Salvar Alterações</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const profissionalSelect = document.getElementById('profissional_id');
+    const dataInput = document.getElementById('data_agendamento');
+    const horaSelect = document.getElementById('hora_agendamento');
+    const loadingDiv = document.getElementById('loading-horarios');
+    
+    // Dados originais para manter selecionado se não mudar
+    const dataOriginal = "{{ agendamento.data_agendamento.strftime('%Y-%m-%d') }}";
+    const horaOriginal = "{{ agendamento.data_agendamento.strftime('%H:%M') }}";
+    const profissionalOriginal = "{{ agendamento.profissional_id }}";
+
+    async function carregarHorarios() {
+        const profissionalId = profissionalSelect.value;
+        const data = dataInput.value;
+
+        if (!profissionalId || !data) return;
+
+        loadingDiv.classList.remove('d-none');
+        horaSelect.disabled = true;
+        
+        try {
+            // Adiciona parâmetro para ignorar o agendamento atual na verificação de conflito
+            const response = await fetch(`/agenda/horarios-disponiveis/${profissionalId}?data=${data}&ignorar_agendamento_id={{ agendamento.id }}`);
+            const result = await response.json();
+            
+            horaSelect.innerHTML = '<option value="">Selecione...</option>';
+            
+            let horarios = result.horarios || [];
+            
+            // Se estivermos na data/profissional originais, garante que a hora original apareça
+            if (data === dataOriginal && profissionalId === profissionalOriginal) {
+                if (!horarios.includes(horaOriginal)) {
+                    horarios.push(horaOriginal);
+                    horarios.sort();
+                }
+            }
+
+            if (horarios.length === 0) {
+                const option = document.createElement('option');
+                option.text = "Nenhum horário livre";
+                horaSelect.add(option);
+            } else {
+                horarios.forEach(hora => {
+                    const option = document.createElement('option');
+                    option.value = hora;
+                    option.textContent = hora;
+                    // Seleciona se for a hora original e nada mudou, ou se o usuário já tinha selecionado antes
+                    if (data === dataOriginal && profissionalId === profissionalOriginal && hora === horaOriginal) {
+                        option.selected = true;
+                    }
+                    horaSelect.add(option);
+                });
+            }
+        } catch (error) {
+            console.error('Erro:', error);
+            horaSelect.innerHTML = '<option value="">Erro ao carregar</option>';
+        } finally {
+            loadingDiv.classList.add('d-none');
+            horaSelect.disabled = false;
+        }
+    }
+
+    profissionalSelect.addEventListener('change', carregarHorarios);
+    dataInput.addEventListener('change', carregarHorarios);
+    
+    // Carregar ao iniciar
+    carregarHorarios();
+});
+</script>
+{% endblock %}

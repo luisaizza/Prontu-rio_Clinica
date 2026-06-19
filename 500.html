@@ -1,0 +1,14 @@
+{% extends "base_clinica.html" %}
+{% block title %}Erro 500 - Erro Interno{% endblock %}
+
+{% block content %}
+<div class="text-center py-5">
+    <h1 class="display-1">500</h1>
+    <h2 class="mb-3">Erro Interno do Servidor</h2>
+    <p class="lead mb-4">Ocorreu um erro inesperado. Nossas equipes foram notificadas.</p>
+    <p class="text-muted mb-4">Por favor, tente novamente mais tarde.</p>
+    <a href="{{ url_for('home') }}" class="btn btn-primary btn-lg">
+        <i class="bi bi-house"></i> Voltar para a Página Inicial
+    </a>
+</div>
+{% endblock %}

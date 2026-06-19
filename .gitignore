@@ -1,0 +1,31 @@
+# Ambiente virtual
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Build artifacts (PyInstaller)
+build/
+dist/
+*.spec.bak
+
+# Configuração local / segredos
+.env
+
+# Banco de dados e dados sensíveis de pacientes
+instance/
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads de pacientes (fotos antes/depois)
+uploads_clinica/*
+!uploads_clinica/.gitkeep
+
+# IDE
+.vscode/
+.idea/

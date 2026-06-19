@@ -1,0 +1,98 @@
+{% extends "base_clinica.html" %}
+{% block title %}Editar Exame Físico - {{ paciente.nome_completo }}{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2><i class="bi bi-heart-pulse me-2 text-info"></i>Editar Exame Físico</h2>
+        <a href="{{ url_for('ver_paciente', paciente_id=paciente.id) }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left me-2"></i>Voltar
+        </a>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-header bg-info text-white">
+            <h5 class="mb-0">Editando exame de {{ paciente.nome_completo }}</h5>
+            <p class="mb-0 small">Realizado em: {{ exame.data_exame | datetimeformat }}</p>
+        </div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('editar_exame_fisico', paciente_id=paciente.id, exame_id=exame.id) }}">
+                
+                <div class="row g-3">
+                    <!-- Sinais Vitais -->
+                    <div class="col-12">
+                        <h6 class="text-primary border-bottom pb-2 mb-3">Sinais Vitais</h6>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <label for="pressao_arterial" class="form-label">Pressão Arterial (mmHg)</label>
+                        <input type="text" class="form-control" id="pressao_arterial" name="pressao_arterial" placeholder="Ex: 120/80" value="{{ exame.pressao_arterial or '' }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="frequencia_cardiaca" class="form-label">Freq. Cardíaca (bpm)</label>
+                        <input type="text" class="form-control" id="frequencia_cardiaca" name="frequencia_cardiaca" value="{{ exame.frequencia_cardiaca or '' }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="temperatura" class="form-label">Temperatura (°C)</label>
+                        <input type="text" class="form-control" id="temperatura" name="temperatura" value="{{ exame.temperatura or '' }}">
+                    </div>
+                    <div class="col-md-3">
+                        <label for="saturacao_o2" class="form-label">Saturação O2 (%)</label>
+                        <input type="text" class="form-control" id="saturacao_o2" name="saturacao_o2" value="{{ exame.saturacao_o2 or '' }}">
+                    </div>
+
+                    <!-- Avaliação Geral -->
+                    <div class="col-12 mt-4">
+                        <h6 class="text-primary border-bottom pb-2 mb-3">Avaliação Sistêmica</h6>
+                    </div>
+
+                    <div class="col-md-6">
+                        <label for="estado_geral" class="form-label">Estado Geral</label>
+                        <input type="text" class="form-control" id="estado_geral" name="estado_geral" placeholder="Ex: Bom, Regular, Ruim" value="{{ exame.estado_geral or '' }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label for="pele_mucosas" class="form-label">Pele e Mucosas</label>
+                        <input type="text" class="form-control" id="pele_mucosas" name="pele_mucosas" placeholder="Ex: Coradas, Hidratadas..." value="{{ exame.pele_mucosas or '' }}">
+                    </div>
+
+                    <div class="col-12">
+                        <label for="aparelho_respiratorio" class="form-label">Aparelho Respiratório</label>
+                        <textarea class="form-control" id="aparelho_respiratorio" name="aparelho_respiratorio" rows="2">{{ exame.aparelho_respiratorio or '' }}</textarea>
+                    </div>
+
+                    <div class="col-12">
+                        <label for="aparelho_cardiovascular" class="form-label">Aparelho Cardiovascular</label>
+                        <textarea class="form-control" id="aparelho_cardiovascular" name="aparelho_cardiovascular" rows="2">{{ exame.aparelho_cardiovascular or '' }}</textarea>
+                    </div>
+
+                    <div class="col-12">
+                        <label for="abdome" class="form-label">Abdome</label>
+                        <textarea class="form-control" id="abdome" name="abdome" rows="2">{{ exame.abdome or '' }}</textarea>
+                    </div>
+
+                    <div class="col-12">
+                        <label for="sistema_nervoso" class="form-label">Sistema Nervoso</label>
+                        <textarea class="form-control" id="sistema_nervoso" name="sistema_nervoso" rows="2">{{ exame.sistema_nervoso or '' }}</textarea>
+                    </div>
+
+                    <div class="col-12">
+                        <label for="sistema_musculo_esqueletico" class="form-label">Sistema Músculo-Esquelético</label>
+                        <textarea class="form-control" id="sistema_musculo_esqueletico" name="sistema_musculo_esqueletico" rows="2">{{ exame.sistema_musculo_esqueletico or '' }}</textarea>
+                    </div>
+
+                    <div class="col-12">
+                        <label for="observacoes_gerais" class="form-label">Observações Gerais</label>
+                        <textarea class="form-control" id="observacoes_gerais" name="observacoes_gerais" rows="3">{{ exame.observacoes_gerais or '' }}</textarea>
+                    </div>
+
+                    <div class="col-12 mt-4">
+                        <button type="submit" class="btn btn-success btn-lg w-100">
+                            <i class="bi bi-check-circle me-2"></i>Salvar Alterações
+                        </button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

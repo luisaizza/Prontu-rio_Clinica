@@ -1,0 +1,503 @@
+{% extends "base_clinica.html" %}
+{% block title %}Prontuário de {{ paciente.nome_completo }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Navegação Superior -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div class="d-flex align-items-center">
+            <a href="{{ url_for('home') }}" class="btn btn-outline-secondary me-3">
+                <i class="bi bi-arrow-left me-2"></i>Voltar
+            </a>
+            <div>
+                <h2 class="mb-1"><i class="bi bi-person-fill me-2 text-primary"></i>{{ paciente.nome_completo }}</h2>
+                <p class="text-muted mb-0">Prontuário do Paciente</p>
+            </div>
+        </div>
+        {% if current_user.tem_permissao('agendar') %}
+        <a href="{{ url_for('agendar_servico', paciente_id=paciente.id) }}" class="btn btn-primary btn-lg">
+            <i class="bi bi-calendar-plus me-2"></i>Agendar Serviço
+        </a>
+        {% endif %}
+    </div>
+
+    <!-- Informações do Paciente -->
+    <div class="row mb-4">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0"><i class="bi bi-info-circle me-2"></i>Informações Pessoais</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-person text-primary me-2"></i>
+                                <strong>Nome Completo:</strong>
+                            </div>
+                            <p class="mb-3">{{ paciente.nome_completo }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-calendar text-primary me-2"></i>
+                                <strong>Data de Nascimento:</strong>
+                            </div>
+                            <p class="mb-3">{{ paciente.data_nascimento | dateformat if paciente.data_nascimento else 'Não informada' }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-credit-card text-primary me-2"></i>
+                                <strong>CPF:</strong>
+                            </div>
+                            <p class="mb-3">{{ paciente.cpf or 'Não informado' }}</p>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-telephone text-primary me-2"></i>
+                                <strong>Telefone:</strong>
+                            </div>
+                            <p class="mb-3">{{ paciente.telefone or 'Não informado' }}</p>
+                        </div>
+                        <div class="col-12">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-envelope text-primary me-2"></i>
+                                <strong>E-mail:</strong>
+                            </div>
+                            <p class="mb-3">{{ paciente.email or 'Não informado' }}</p>
+                        </div>
+                        <div class="col-12">
+                            <div class="d-flex align-items-center mb-2">
+                                <i class="bi bi-file-medical text-primary me-2"></i>
+                                <strong>Histórico Médico:</strong>
+                            </div>
+                            <div class="bg-light p-3 rounded">{{ paciente.historico_medico or 'Nenhum histórico informado.' }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer">
+                    <div class="d-flex gap-2">
+                        <a href="{{ url_for('editar_paciente', paciente_id=paciente.id) }}" class="btn btn-warning">
+                            <i class="bi bi-pencil-square me-2"></i>Editar Dados
+                        </a>
+                        {% if current_user.tem_permissao('gerenciar_pacientes') %}
+                        <button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#deleteModal">
+                            <i class="bi bi-trash me-2"></i>Excluir Paciente
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-lg-4">
+            <!-- Estatísticas Rápidas -->
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-bar-chart me-2"></i>Estatísticas</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row text-center">
+                        <div class="col-6 mb-3">
+                            <h4 class="text-primary">{{ atendimentos|length }}</h4>
+                            <small class="text-muted">Atendimentos</small>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <h4 class="text-success">{{ agendamentos_servicos|length }}</h4>
+                            <small class="text-muted">Agendamentos</small>
+                        </div>
+                        <div class="col-6">
+                            <h4 class="text-info">{{ agendamentos_servicos|selectattr('status', 'equalto', 'finalizado')|list|length }}</h4>
+                            <small class="text-muted">Finalizados</small>
+                        </div>
+                        <div class="col-6">
+                            <h4 class="text-warning">{{ agendamentos_servicos|selectattr('status', 'equalto', 'agendado')|list|length }}</h4>
+                            <small class="text-muted">Pendentes</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ações Rápidas -->
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-lightning me-2"></i>Ações Rápidas</h6>
+                </div>
+                <div class="card-body d-grid gap-2">
+                    <a href="{{ url_for('nova_anamnese', paciente_id=paciente.id) }}" class="btn btn-outline-primary">
+                        <i class="bi bi-clipboard-plus me-2"></i>Nova Anamnese
+                    </a>
+                    <a href="{{ url_for('novo_exame_fisico', paciente_id=paciente.id) }}" class="btn btn-outline-info">
+                        <i class="bi bi-heart-pulse me-2"></i>Novo Exame Físico
+                    </a>
+                    <a href="{{ url_for('agenda_calendario') }}" class="btn btn-outline-secondary">
+                        <i class="bi bi-calendar-week me-2"></i>Ver Agenda
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Histórico Clínico (Anamnese e Exame Físico) -->
+    <div class="accordion mb-4" id="historicoClinicoAccordion">
+        <!-- Anamneses -->
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="headingAnamneses">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAnamneses" aria-expanded="false" aria-controls="collapseAnamneses">
+                    <i class="bi bi-clipboard-pulse me-2"></i> Histórico de Anamneses ({{ paciente.anamneses|length }})
+                </button>
+            </h2>
+            <div id="collapseAnamneses" class="accordion-collapse collapse" aria-labelledby="headingAnamneses" data-bs-parent="#historicoClinicoAccordion">
+                <div class="accordion-body">
+                    {% if paciente.anamneses %}
+                        {% for anamnese in paciente.anamneses|sort(attribute='data_anamnese', reverse=true) %}
+                            <div class="border-bottom pb-3 mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <p class="text-muted mb-0"><strong>Realizada em:</strong> {{ anamnese.data_anamnese | datetimeformat }}</p>
+                                    {% if current_user.tem_permissao('atender') %}
+                                    <a href="{{ url_for('editar_anamnese', paciente_id=paciente.id, anamnese_id=anamnese.id) }}" class="btn btn-sm btn-outline-warning">
+                                        <i class="bi bi-pencil-square me-1"></i> Editar
+                                    </a>
+                                    {% endif %}
+                                </div>
+                                <dl class="row">
+                                    <dt class="col-sm-3">Queixa Principal</dt>
+                                    <dd class="col-sm-9">{{ anamnese.queixa_principal or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Histórico da Doença Atual</dt>
+                                    <dd class="col-sm-9">{{ anamnese.historico_doenca_atual or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Histórico Patológico Pregresso</dt>
+                                    <dd class="col-sm-9">{{ anamnese.historico_patologico_pregresso or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Histórico Familiar</dt>
+                                    <dd class="col-sm-9">{{ anamnese.historico_familiar or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Hábitos de Vida</dt>
+                                    <dd class="col-sm-9">{{ anamnese.habitos_vida or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Medicamentos em Uso</dt>
+                                    <dd class="col-sm-9">{{ anamnese.medicamentos_uso or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Alergias</dt>
+                                    <dd class="col-sm-9">{{ anamnese.alergias or 'Não informado' }}</dd>
+                                </dl>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-center py-3">
+                            <i class="bi bi-file-earmark-x display-4 text-muted"></i>
+                            <p class="mt-2 text-muted">Nenhuma anamnese registrada para este paciente.</p>
+                            <a href="{{ url_for('nova_anamnese', paciente_id=paciente.id) }}" class="btn btn-primary">
+                                <i class="bi bi-clipboard-plus me-2"></i>Registrar Primeira Anamnese
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Exames Físicos -->
+        <div class="accordion-item">
+            <h2 class="accordion-header" id="headingExames">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseExames" aria-expanded="false" aria-controls="collapseExames">
+                    <i class="bi bi-heart-pulse me-2"></i> Histórico de Exames Físicos ({{ paciente.exames_fisicos|length }})
+                </button>
+            </h2>
+            <div id="collapseExames" class="accordion-collapse collapse" aria-labelledby="headingExames" data-bs-parent="#historicoClinicoAccordion">
+                <div class="accordion-body">
+                    {% if paciente.exames_fisicos %}
+                        {% for exame in paciente.exames_fisicos|sort(attribute='data_exame', reverse=true) %}
+                            <div class="border-bottom pb-3 mb-3">
+                                <div class="d-flex justify-content-between align-items-center mb-2">
+                                    <p class="text-muted mb-0"><strong>Realizado em:</strong> {{ exame.data_exame | datetimeformat }}</p>
+                                    {% if current_user.tem_permissao('atender') %}
+                                    <a href="{{ url_for('editar_exame_fisico', paciente_id=paciente.id, exame_id=exame.id) }}" class="btn btn-sm btn-outline-warning">
+                                        <i class="bi bi-pencil-square me-1"></i> Editar
+                                    </a>
+                                    {% endif %}
+                                </div>
+                                
+                                <h6 class="text-primary">Sinais Vitais</h6>
+                                <div class="row mb-3">
+                                    <div class="col-sm-3"><strong>PA:</strong> {{ exame.pressao_arterial or 'N/A' }} mmHg</div>
+                                    <div class="col-sm-3"><strong>FC:</strong> {{ exame.frequencia_cardiaca or 'N/A' }} bpm</div>
+                                    <div class="col-sm-3"><strong>Temp:</strong> {{ exame.temperatura or 'N/A' }} °C</div>
+                                    <div class="col-sm-3"><strong>Sat O₂:</strong> {{ exame.saturacao_o2 or 'N/A' }} %</div>
+                                </div>
+
+                                <h6 class="text-primary mt-3">Avaliação Sistêmica</h6>
+                                <dl class="row">
+                                    <dt class="col-sm-3">Estado Geral</dt>
+                                    <dd class="col-sm-9">{{ exame.estado_geral or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Pele e Mucosas</dt>
+                                    <dd class="col-sm-9">{{ exame.pele_mucosas or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Aparelho Respiratório</dt>
+                                    <dd class="col-sm-9">{{ exame.aparelho_respiratorio or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Aparelho Cardiovascular</dt>
+                                    <dd class="col-sm-9">{{ exame.aparelho_cardiovascular or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Abdome</dt>
+                                    <dd class="col-sm-9">{{ exame.abdome or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Sistema Nervoso</dt>
+                                    <dd class="col-sm-9">{{ exame.sistema_nervoso or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Sistema Músculo-Esquelético</dt>
+                                    <dd class="col-sm-9">{{ exame.sistema_musculo_esqueletico or 'Não informado' }}</dd>
+
+                                    <dt class="col-sm-3">Observações Gerais</dt>
+                                    <dd class="col-sm-9">{{ exame.observacoes_gerais or 'Não informado' }}</dd>
+                                </dl>
+                            </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-center py-3">
+                            <i class="bi bi-file-earmark-x display-4 text-muted"></i>
+                            <p class="mt-2 text-muted">Nenhum exame físico registrado para este paciente.</p>
+                            <a href="{{ url_for('novo_exame_fisico', paciente_id=paciente.id) }}" class="btn btn-info">
+                                <i class="bi bi-heart-pulse me-2"></i>Registrar Primeiro Exame Físico
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+<!-- Novo Atendimento -->
+<div class="card mb-4">
+    <div class="card-header">
+            <h5 class="mb-0"><i class="bi bi-journal-plus me-2"></i>Registrar Novo Atendimento</h5>
+        </div>
+        <div class="card-body">
+            <form method="POST" action="{{ url_for('novo_atendimento', paciente_id=paciente.id) }}" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                
+                <div class="row g-3">
+                    <div class="col-12">
+                        <label for="procedimentos_realizados" class="form-label">
+                            <i class="bi bi-list-check text-primary me-2"></i>Procedimentos Realizados
+                        </label>
+                        <input type="text" class="form-control" id="procedimentos_realizados" name="procedimentos_realizados" 
+                               placeholder="Ex: Limpeza de Pele, Hidratação Facial, Massagem Relaxante" required>
+                        <div class="form-text">Digite os procedimentos separados por vírgula</div>
+                    </div>
+                    
+                    <div class="col-12">
+                        <label for="anotacoes" class="form-label">
+                            <i class="bi bi-pencil text-primary me-2"></i>Anotações do Atendimento
+                        </label>
+                        <textarea class="form-control" id="anotacoes" name="anotacoes" rows="4" 
+                                  placeholder="Descreva o atendimento realizado, observações importantes, recomendações..."></textarea>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <label for="foto_antes" class="form-label">
+                            <i class="bi bi-camera text-primary me-2"></i>Foto "Antes" (Opcional)
+                        </label>
+                        <input class="form-control" type="file" id="foto_antes" name="foto_antes" accept="image/*">
+                        <div class="form-text">Máximo 5MB, formatos: PNG, JPG, JPEG</div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <label for="foto_depois" class="form-label">
+                            <i class="bi bi-camera-fill text-primary me-2"></i>Foto "Depois" (Opcional)
+                        </label>
+                        <input class="form-control" type="file" id="foto_depois" name="foto_depois" accept="image/*">
+                        <div class="form-text">Máximo 5MB, formatos: PNG, JPG, JPEG</div>
+                    </div>
+                    
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-primary btn-lg w-100">
+                            <i class="bi bi-check-circle me-2"></i>Salvar Atendimento
+                        </button>
+                    </div>
+                </div>
+            </form>
+<!-- Agendamentos de Serviços -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-calendar-check me-2"></i>Agendamentos de Serviços</h5>
+        <span class="badge bg-primary">{{ agendamentos_servicos|length }}</span>
+    </div>
+    <div class="card-body">
+        {% if agendamentos_servicos %}
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th><i class="bi bi-calendar-event me-2"></i>Data/Hora</th>
+                        <th><i class="bi bi-scissors me-2"></i>Serviço</th>
+                        <th><i class="bi bi-person me-2"></i>Profissional</th>
+                        <th><i class="bi bi-flag me-2"></i>Status</th>
+                        <th class="text-center"><i class="bi bi-gear me-2"></i>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ag in agendamentos_servicos|sort(attribute='data_agendamento', reverse=true) %}
+                    <tr class="{% if ag.status == 'cancelado' %}table-danger{% elif ag.status == 'finalizado' %}table-success{% elif ag.status == 'em_andamento' %}table-warning{% endif %}">
+                        <td>
+                            <strong>{{ ag.data_agendamento|datetimeformat }}</strong>
+                            {% if ag.tempo_restante() < 0 and ag.status == 'agendado' %}
+                            <br><small class="text-danger">Atrasado</small>
+                            {% elif ag.tempo_restante() <= 60 and ag.status == 'agendado' %}
+                            <br><small class="text-warning">Em breve</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {{ ag.servico.nome_servico }}
+                            <br><small class="text-muted">R$ {{ "%.2f"|format(ag.servico.preco) }}</small>
+                        </td>
+                        <td>{{ ag.profissional.usuario.username|upper }}</td>
+                        <td>
+                            <span class="badge 
+                                {% if ag.status == 'agendado' %}bg-primary
+                                {% elif ag.status == 'confirmado' %}bg-info
+                                {% elif ag.status == 'em_andamento' %}bg-warning text-dark
+                                {% elif ag.status == 'finalizado' %}bg-success
+                                {% elif ag.status == 'cancelado' %}bg-danger
+                                {% else %}bg-secondary{% endif %}">
+                                {{ ag.status|replace('_', ' ')|title }}
+                            </span>
+                        </td>
+                        <td class="text-center">
+                            <div class="btn-group btn-group-sm">
+                                <!-- Botão Confirmar -->
+                                {% if ag.status == 'agendado' and current_user.tem_permissao('agendar') %}
+                                <form method="POST" action="{{ url_for('confirmar_agendamento', agendamento_id=ag.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-sm btn-success" title="Confirmar Agendamento" data-bs-toggle="tooltip">
+                                        <i class="bi bi-check-circle"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+
+                                <!-- Botão Iniciar -->
+                                {% if ag.status == 'confirmado' and ag.tempo_restante() > 0 and current_user.tem_permissao('atender') %}
+                                <form method="POST" action="{{ url_for('iniciar_atendimento', agendamento_id=ag.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-sm btn-warning" title="Iniciar Atendimento" data-bs-toggle="tooltip">
+                                        <i class="bi bi-play-circle"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+
+                                <!-- Botão Finalizar -->
+                                {% if ag.status == 'em_andamento' and current_user.tem_permissao('atender') %}
+                                <form method="POST" action="{{ url_for('finalizar_atendimento', agendamento_id=ag.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-sm btn-success" title="Finalizar Atendimento" data-bs-toggle="tooltip">
+                                        <i class="bi bi-check-circle-fill"></i>
+                                    </button>
+                                </form>
+                                {% endif %}
+
+                                <!-- Botão Editar/Reagendar -->
+                                {% if ag.status not in ['finalizado', 'cancelado'] and current_user.tem_permissao('agendar') %}
+                                <a href="{{ url_for('editar_agendamento', agendamento_id=ag.id) }}" class="btn btn-sm btn-secondary" title="Editar/Reagendar" data-bs-toggle="tooltip">
+                                    <i class="bi bi-pencil-square"></i>
+                                </a>
+                                {% endif %}
+
+                                <!-- Botão Cancelar -->
+                                {% if ag.status not in ['finalizado', 'cancelado'] and (current_user.perfil == 'admin' or current_user.perfil_profissional.id == ag.profissional_id) %}
+                                <button type="button" class="btn btn-sm btn-danger" title="Cancelar Agendamento" data-bs-toggle="modal" data-bs-target="#cancelModal{{ ag.id }}">
+                                    <i class="bi bi-x-circle"></i>
+                                </button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="text-center py-4">
+            <i class="bi bi-calendar-x display-1 text-muted mb-3"></i>
+            <h5 class="text-muted">Nenhum agendamento encontrado</h5>
+            <p class="text-muted mb-3">Este paciente ainda não possui agendamentos de serviços.</p>
+            <a href="{{ url_for('agendar_servico', paciente_id=paciente.id) }}" class="btn btn-primary">
+                <i class="bi bi-calendar-plus me-2"></i>Criar Primeiro Agendamento
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Histórico de Atendimentos -->
+<div class="card">
+    <div class="card-header">
+        <h4><i class="bi bi-list-ul"></i> Histórico de Atendimentos</h4>
+    </div>
+    <div class="card-body">
+        {% if atendimentos %}
+            {% for atendimento in atendimentos %}
+            <div class="border-bottom pb-3 mb-3">
+                <p class="text-muted">Realizado em: {{ atendimento.data_atendimento | datetimeformat }}</p>
+                <h5>Procedimentos:</h5>
+                <ul>
+                    {% for proc in atendimento.procedimentos %}
+                        <li>{{ proc.nome_procedimento }}</li>
+                    {% else %}
+                        <li>Nenhum procedimento registrado</li>
+                    {% endfor %}
+                </ul>
+                <p><strong>Anotações:</strong></p>
+                <pre class="bg-light p-2 rounded">{{ atendimento.anotacoes or 'Nenhuma anotação.' }}</pre>
+                <div class="row">
+                    {% if atendimento.foto_antes %}
+                    <div class="col-md-6">
+                        <h6>Antes</h6>
+                        <img src="{{ url_for('uploaded_file', filename=atendimento.foto_antes) }}" class="img-fluid rounded" alt="Foto antes">
+                    </div>
+                    {% endif %}
+                    {% if atendimento.foto_depois %}
+                    <div class="col-md-6">
+                        <h6>Depois</h6>
+                        <img src="{{ url_for('uploaded_file', filename=atendimento.foto_depois) }}" class="img-fluid rounded" alt="Foto depois">
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <p class="text-center">Nenhum atendimento registrado para este paciente.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Modal de Confirmação de Exclusão -->
+<div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteModalLabel">Confirmar Exclusão</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        Tem certeza que deseja excluir o paciente <strong>{{ paciente.nome_completo }}</strong>? Todos os seus atendimentos também serão removidos. Esta ação não pode ser desfeita.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+        <form action="{{ url_for('deletar_paciente', paciente_id=paciente.id) }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-danger">Sim, Excluir</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+<script>
+// Inicializar tooltips
+document.addEventListener('DOMContentLoaded', function() {
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+        return new bootstrap.Tooltip(tooltipTriggerEl);
+    });
+});
+</script>

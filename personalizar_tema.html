@@ -1,0 +1,85 @@
+{% extends "base_clinica.html" %}
+
+{% block title %}Personalizar Tema{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-palette me-2"></i>Personalizar Aparência</h5>
+                </div>
+                <div class="card-body">
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        
+                        <h6 class="mb-3 border-bottom pb-2">Dashboard (Tela Inicial)</h6>
+                        
+                        <div class="mb-4">
+                            <label class="form-label d-block mb-2">Cor do Card "Novos Pacientes"</label>
+                            <div class="d-flex flex-wrap gap-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="cor_novos_pacientes" id="corSuccess" value="text-success" {% if cor_atual == 'text-success' %}checked{% endif %}>
+                                    <label class="form-check-label text-success fw-bold" for="corSuccess">Verde (Sucesso)</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="cor_novos_pacientes" id="corWarning" value="text-warning" {% if cor_atual == 'text-warning' %}checked{% endif %}>
+                                    <label class="form-check-label text-warning fw-bold" for="corWarning">Amarelo (Atenção)</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="cor_novos_pacientes" id="corPrimary" value="text-primary" {% if cor_atual == 'text-primary' %}checked{% endif %}>
+                                    <label class="form-check-label text-primary fw-bold" for="corPrimary">Azul (Padrão)</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="cor_novos_pacientes" id="corDanger" value="text-danger" {% if cor_atual == 'text-danger' %}checked{% endif %}>
+                                    <label class="form-check-label text-danger fw-bold" for="corDanger">Vermelho (Alerta)</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h6 class="mb-3 border-bottom pb-2">Cabeçalho (Menu Superior)</h6>
+                        
+                        <div class="mb-4">
+                            <label class="form-label d-block mb-2">Cor do Cabeçalho</label>
+                            <div class="d-flex flex-wrap gap-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="cor_cabecalho" id="headerLight" value="bg-light navbar-light" {% if cor_cabecalho == 'bg-light navbar-light' %}checked{% endif %}>
+                                    <label class="form-check-label bg-light text-dark border px-2 rounded" for="headerLight">Claro (Padrão)</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="cor_cabecalho" id="headerPrimary" value="bg-primary navbar-dark" {% if cor_cabecalho == 'bg-primary navbar-dark' %}checked{% endif %}>
+                                    <label class="form-check-label bg-primary text-white px-2 rounded" for="headerPrimary">Azul</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="cor_cabecalho" id="headerDark" value="bg-dark navbar-dark" {% if cor_cabecalho == 'bg-dark navbar-dark' %}checked{% endif %}>
+                                    <label class="form-check-label bg-dark text-white px-2 rounded" for="headerDark">Escuro</label>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h6 class="mb-3 border-bottom pb-2">Configurações de E-mail (Notificações)</h6>
+                        <div class="alert alert-info small">
+                            <i class="bi bi-info-circle me-2"></i>Use uma "Senha de Aplicativo" do Gmail para maior segurança.
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label for="email_clinica" class="form-label">E-mail da Clínica (Gmail)</label>
+                            <input type="email" class="form-control" id="email_clinica" name="email_clinica" value="{{ email_clinica }}" placeholder="exemplo@gmail.com">
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label for="senha_email_clinica" class="form-label">Senha de Aplicativo / Senha do E-mail</label>
+                            <input type="password" class="form-control" id="senha_email_clinica" name="senha_email_clinica" value="{{ senha_email }}" placeholder="Insira a senha de app aqui">
+                        </div>
+
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary"><i class="bi bi-save me-2"></i>Salvar Preferências</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,161 @@
+{% extends "base_clinica.html" %}
+{% block title %}Agenda Calendário{% endblock %}
+
+{% block head %}
+    {{ super() }}
+    <!-- FullCalendar CSS & JS -->
+    <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+    <style>
+        /* Ajustes para o FullCalendar */
+        .fc-event {
+            cursor: pointer;
+            border: none !important;
+        }
+        .fc-event-title {
+            font-weight: 500;
+        }
+        /* Cores por status */
+        .fc-event[data-status="agendado"] { background-color: #0d6efd; }
+        .fc-event[data-status="confirmado"] { background-color: #0dcaf0; }
+        .fc-event[data-status="em_andamento"] { background-color: #ffc107; color: #000; }
+        .fc-event[data-status="finalizado"] { background-color: #198754; }
+        .fc-event[data-status="cancelado"] { background-color: #dc3545; }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+    <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h2 class="h4 mb-0"><i class="bi bi-calendar3"></i> Calendário de Agendamentos</h2>
+            <div class="d-flex align-items-center gap-2">
+                <label for="filtro-profissional" class="form-label mb-0">Filtrar:</label>
+                <select id="filtro-profissional" class="form-select form-select-sm" style="width: auto;">
+                    <option value="todos">Todos os Profissionais</option>
+                    {% for prof in profissionais %}
+                    <option value="{{ prof.id }}">{{ prof.usuario.username.upper() }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="card-body">
+            <div id='calendar'></div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Detalhes do Agendamento -->
+<div class="modal fade" id="agendamentoModal" tabindex="-1" aria-labelledby="agendamentoModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="agendamentoModalLabel">Detalhes do Agendamento</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p><strong>Paciente:</strong> <span id="modal-paciente"></span></p>
+        <p><strong>Serviço:</strong> <span id="modal-servico"></span></p>
+        <p><strong>Profissional:</strong> <span id="modal-profissional"></span></p>
+        <p><strong>Data:</strong> <span id="modal-data"></span></p>
+        <p><strong>Hora:</strong> <span id="modal-hora"></span></p>
+        <p><strong>Status:</strong> <span id="modal-status" class="badge"></span></p>
+        <p><strong>Observações:</strong> <span id="modal-observacoes"></span></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+        <a id="btn-ver-paciente" href="#" class="btn btn-outline-primary">Ver Paciente</a>
+        <a id="btn-editar-agendamento" href="#" class="btn btn-primary">Editar Agendamento</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const calendarEl = document.getElementById('calendar');
+    const filtroSelect = document.getElementById('filtro-profissional');
+    const agendamentoModal = new bootstrap.Modal(document.getElementById('agendamentoModal'));
+
+    // Mapeia os dados dos agendamentos do Python para o formato do FullCalendar
+    const eventos = {{ agendamentos|tojson|safe }}.map(ag => ({
+        id: ag.id,
+        title: ag.paciente,
+        start: `${ag.data}T${ag.hora}`,
+        extendedProps: {
+            paciente_id: ag.paciente_id,
+            servico: ag.servico,
+            profissional: ag.profissional,
+            profissional_id: ag.profissional_id,
+            data: new Date(`${ag.data}T00:00:00`).toLocaleDateString('pt-BR'),
+            hora: ag.hora,
+            status: ag.status,
+            observacoes: ag.observacoes || 'Nenhuma'
+        },
+        // Adiciona o status como um atributo para estilização com CSS
+        'data-status': ag.status 
+    }));
+
+    const calendar = new FullCalendar.Calendar(calendarEl, {
+        locale: 'pt-br',
+        headerToolbar: {
+            left: 'prev,next today',
+            center: 'title',
+            right: 'dayGridMonth,timeGridWeek,timeGridDay'
+        },
+        initialView: 'timeGridWeek',
+        events: eventos,
+        eventDidMount: function(info) {
+            // Adiciona o atributo de status ao elemento do evento
+            info.el.setAttribute('data-status', info.event.extendedProps.status);
+        },
+        eventClick: function(info) {
+            // Preenche o modal com os dados do evento clicado
+            const props = info.event.extendedProps;
+            document.getElementById('modal-paciente').textContent = info.event.title;
+            document.getElementById('modal-servico').textContent = props.servico;
+            document.getElementById('modal-profissional').textContent = props.profissional;
+            document.getElementById('modal-data').textContent = props.data;
+            document.getElementById('modal-hora').textContent = props.hora;
+            document.getElementById('modal-observacoes').textContent = props.observacoes;
+
+            // Estiliza o status
+            const statusBadge = document.getElementById('modal-status');
+            statusBadge.textContent = props.status.replace('_', ' ').toUpperCase();
+            statusBadge.className = 'badge'; // Limpa classes antigas
+            switch(props.status) {
+                case 'agendado': statusBadge.classList.add('bg-primary'); break;
+                case 'confirmado': statusBadge.classList.add('bg-info'); break;
+                case 'em_andamento': statusBadge.classList.add('bg-warning', 'text-dark'); break;
+                case 'finalizado': statusBadge.classList.add('bg-success'); break;
+                case 'cancelado': statusBadge.classList.add('bg-danger'); break;
+                default: statusBadge.classList.add('bg-secondary');
+            }
+
+            // Define os links dos botões
+            const urlVerPaciente = `{{ url_for('ver_paciente', paciente_id=0) }}`.replace('0', props.paciente_id);
+            document.getElementById('btn-ver-paciente').href = urlVerPaciente;
+
+            const urlEditarAgendamento = `{{ url_for('editar_agendamento', agendamento_id=0) }}`.replace('0', info.event.id);
+            document.getElementById('btn-editar-agendamento').href = urlEditarAgendamento;
+
+            // Mostra o modal
+            agendamentoModal.show();
+        }
+    });
+
+    calendar.render();
+
+    // Lógica para o filtro de profissional
+    filtroSelect.addEventListener('change', function() {
+        const profissionalId = this.value;
+        calendar.getEvents().forEach(event => {
+            if (profissionalId === 'todos' || event.extendedProps.profissional_id == profissionalId) {
+                event.setProp('display', 'auto');
+            } else {
+                event.setProp('display', 'none');
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,195 @@
+{% extends "base_clinica.html" %}
+{% block title %}Gerenciar Horários - {{ profissional.usuario.username | upper }}{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h2><i class="bi bi-clock"></i> Horários de {{ profissional.usuario.username | upper }}</h2>
+        <p class="text-muted">Configure os horários de disponibilidade desta profissional</p>
+    </div>
+    <div class="col-auto">
+        <a href="{{ url_for('listar_profissionais') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Voltar
+        </a>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Coluna de Adição de Horários -->
+    <div class="col-md-5 mb-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="bi bi-plus-circle"></i> Adicionar Novo Horário</h5>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="acao" value="adicionar">
+                    
+                    <div class="mb-3">
+                        <label for="dia_semana" class="form-label">Dia da Semana:</label>
+                        <select class="form-select" id="dia_semana" name="dia_semana" required>
+                            <option value="">Selecione um dia</option>
+                            {% for num, nome in dias_semana.items() %}
+                            <option value="{{ num }}">{{ nome }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="hora_inicio" class="form-label">Hora de Início:</label>
+                            <input type="time" class="form-control" id="hora_inicio" name="hora_inicio" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="hora_fim" class="form-label">Hora de Término:</label>
+                            <input type="time" class="form-control" id="hora_fim" name="hora_fim" required>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="intervalo_minutos" class="form-label">Intervalo entre Agendamentos (minutos):</label>
+                        <select class="form-select" id="intervalo_minutos" name="intervalo_minutos">
+                            <option value="15">15 minutos</option>
+                            <option value="30" selected>30 minutos</option>
+                            <option value="45">45 minutos</option>
+                            <option value="60">1 hora</option>
+                        </select>
+                        <small class="text-muted">Tempo mínimo entre um agendamento e outro</small>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-plus-circle"></i> Adicionar Horário
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Informações do Profissional -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">Informações</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <strong>Profissional:</strong><br>
+                    {{ profissional.usuario.username | upper }}
+                </div>
+                <div class="mb-3">
+                    <strong>Especialidades:</strong><br>
+                    {{ profissional.especialidades or 'Não informadas' }}
+                </div>
+                <div class="mb-3">
+                    <strong>Telefone:</strong><br>
+                    {{ profissional.telefone_contato or 'Não informado' }}
+                </div>
+                <div class="mb-3">
+                    <strong>Status:</strong><br>
+                    <span class="badge bg-{{ 'success' if profissional.disponibilidade_status == 'disponível' else 'danger' }}">
+                        {{ profissional.disponibilidade_status | upper }}
+                    </span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Coluna de Horários Existentes -->
+    <div class="col-md-7">
+        <div class="card">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0"><i class="bi bi-list-check"></i> Horários Configurados</h5>
+            </div>
+            <div class="card-body">
+                {% if horarios %}
+                    {% set horarios_por_dia = {} %}
+                    {% for horario in horarios %}
+                        {% set dia = horario.get_nome_dia() %}
+                        {% if dia not in horarios_por_dia %}
+                            {% set _ = horarios_por_dia.update({dia: []}) %}
+                        {% endif %}
+                        {% set _ = horarios_por_dia[dia].append(horario) %}
+                    {% endfor %}
+
+                    {% for dia in dias_semana.values() %}
+                        {% if dia in horarios_por_dia %}
+                        <div class="mb-4">
+                            <h6 class="fw-bold mb-3">
+                                <i class="bi bi-calendar-event"></i> {{ dia }}
+                            </h6>
+                            <div class="table-responsive">
+                                <table class="table table-sm table-hover mb-0">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Horário</th>
+                                            <th>Intervalo</th>
+                                            <th>Status</th>
+                                            <th class="text-center">Ações</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for horario in horarios_por_dia[dia] %}
+                                        <tr>
+                                            <td>
+                                                <strong>
+                                                    {{ horario.hora_inicio.strftime('%H:%M') }} - {{ horario.hora_fim.strftime('%H:%M') }}
+                                                </strong>
+                                            </td>
+                                            <td>{{ horario.intervalo_minutos }}min</td>
+                                            <td>
+                                                <span class="badge bg-{{ 'success' if horario.ativo else 'secondary' }}">
+                                                    {{ 'Ativo' if horario.ativo else 'Inativo' }}
+                                                </span>
+                                            </td>
+                                            <td class="text-center">
+                                                <form method="POST" style="display: inline;">
+                                                    <input type="hidden" name="acao" value="alternar">
+                                                    <input type="hidden" name="horario_id" value="{{ horario.id }}">
+                                                    <button type="submit" class="btn btn-sm btn-{{ 'warning' if horario.ativo else 'info' }}" title="{{ 'Desativar' if horario.ativo else 'Ativar' }}">
+                                                        <i class="bi bi-{{ 'eye-slash' if horario.ativo else 'eye' }}"></i>
+                                                    </button>
+                                                </form>
+                                                <form method="POST" style="display: inline;">
+                                                    <input type="hidden" name="acao" value="deletar">
+                                                    <input type="hidden" name="horario_id" value="{{ horario.id }}">
+                                                    <button type="submit" class="btn btn-sm btn-danger" onclick="return confirm('Tem certeza?')">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <hr>
+                        {% endif %}
+                    {% endfor %}
+                {% else %}
+                    <div class="alert alert-info" role="alert">
+                        <i class="bi bi-info-circle"></i> Nenhum horário configurado ainda. Adicione um novo horário ao lado!
+                    </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Resumo -->
+        <div class="card mt-4">
+            <div class="card-header">
+                <h5 class="mb-0">Resumo</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-6">
+                        <small class="text-muted">Total de Horários</small>
+                        <h4 class="mb-0">{{ horarios|length }}</h4>
+                    </div>
+                    <div class="col-6">
+                        <small class="text-muted">Horários Ativos</small>
+                        <h4 class="mb-0">{{ horarios|selectattr('ativo', 'equalto', True)|list|length }}</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

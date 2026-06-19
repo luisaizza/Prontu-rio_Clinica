@@ -1,0 +1,74 @@
+{% extends "base_clinica.html" %}
+{% block title %}Gerenciar Usuários{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>Gerenciar Usuários do Sistema</h2>
+        <a href="{{ url_for('registro') }}" class="btn btn-primary">
+            <i class="bi bi-person-plus-fill"></i> Novo Usuário
+        </a>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Usuário</th>
+                            <th>Perfil</th>
+                            <th class="text-center">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for usuario in usuarios %}
+                        <tr>
+                            <td>
+                                <i class="bi bi-person-fill text-muted"></i>
+                                <span class="fw-bold">{{ usuario.username }}</span>
+                            </td>
+                            <td>
+                                <span class="badge 
+                                    {% if usuario.perfil == 'admin' %}bg-danger
+                                    {% elif usuario.perfil == 'secretaria' %}bg-info
+                                    {% else %}bg-secondary
+                                    {% endif %}">
+                                    {{ usuario.perfil.upper() }}
+                                </span>
+                            </td>
+                            <td class="text-center">
+                                {% if usuario.username != 'luisaizza' and usuario.id != current_user.id %}
+                                <div class="btn-group">
+                                    <form method="POST" action="{{ url_for('alterar_perfil_usuario', usuario_id=usuario.id, perfil='admin') }}" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Tornar Admin">Admin</button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('alterar_perfil_usuario', usuario_id=usuario.id, perfil='secretaria') }}" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-info" title="Tornar Secretaria">Secretaria</button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('alterar_perfil_usuario', usuario_id=usuario.id, perfil='esteta') }}" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary" title="Tornar Esteta">Esteta</button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('deletar_usuario', usuario_id=usuario.id) }}" onsubmit="return confirm('Tem certeza que deseja deletar este usuário?');" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-danger" title="Deletar Usuário"><i class="bi bi-trash-fill"></i></button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('resetar_senha_usuario', usuario_id=usuario.id) }}" onsubmit="return confirm('Tem certeza que deseja resetar a senha deste usuário? A nova senha será \'Mudar@123\'.');" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-warning" title="Resetar Senha"><i class="bi bi-key-fill"></i></button>
+                                    </form>
+                                </div>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

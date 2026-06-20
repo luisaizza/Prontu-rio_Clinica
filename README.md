@@ -132,12 +132,9 @@ SECRET_KEY=sua-chave-super-segura-aqui
 # Ambiente
 FLASK_ENV=development
 FLASK_DEBUG=True
-
-# Setup inicial
-SETUP_ENABLED=0
-SETUP_USERNAME=admin
-SETUP_PASSWORD=senha-forte
 ```
+
+Não há mais setup inicial via variáveis de ambiente: o sistema é multi-tenant self-service — cada clínica se cadastra em `/criar-clinica`, o que já cria o estabelecimento e o primeiro usuário admin daquela clínica.
 
 ### Mudando a Senha Padrão
 

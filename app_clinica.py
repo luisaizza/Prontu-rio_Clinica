@@ -3,6 +3,8 @@ import sys
 import uuid
 import logging
 import webbrowser
+import contextvars
+from contextlib import contextmanager
 from threading import Timer
 from datetime import datetime, timedelta, time
 import smtplib
@@ -19,7 +21,8 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.utils import secure_filename
 from flask_wtf.csrf import CSRFProtect
 from flask_wtf import FlaskForm
-from sqlalchemy import func, extract
+from sqlalchemy import func, extract, event
+from sqlalchemy.orm import declared_attr, with_loader_criteria, Session
 from wtforms import StringField, PasswordField, SubmitField, SelectField, DateField, TimeField, TextAreaField, validators, ValidationError
 
 from config import config, validar_configuracao_producao
@@ -116,46 +119,46 @@ def requer_perfil(perfil):
 @app.context_processor
 def inject_utilities():
     """Injeta utilitários em todos os templates."""
-    # Tenta buscar configurações, ignorando erro caso a tabela ainda não exista
-    configuracoes = {}
-    try:
-        configuracoes = {c.chave: c.valor for c in Configuracao.query.all()}
-    except:
-        pass
+    estabelecimento_atual = current_user.estabelecimento if current_user.is_authenticated else None
     return {
         'current_year': datetime.now().year,
         'now': datetime.now(),
         'timedelta': timedelta,
-        'config': configuracoes
+        'estabelecimento_atual': estabelecimento_atual,
     }
 
 # --- FUNÇÕES DE E-MAIL ---
 
-def enviar_email(destinatario, assunto, corpo):
-    """Envia um e-mail usando as configurações do sistema."""
+def enviar_email(estabelecimento, destinatario, assunto, corpo):
+    """Envia um e-mail usando as credenciais SMTP daquele estabelecimento (clínica)."""
     with app.app_context():
-        conf_email = Configuracao.query.filter_by(chave='email_clinica').first()
-        conf_senha = Configuracao.query.filter_by(chave='senha_email_clinica').first()
-        
-        if not conf_email or not conf_senha or not conf_email.valor or not conf_senha.valor:
-            logger.warning("Tentativa de envio de e-mail sem credenciais configuradas.")
+        if not estabelecimento or not estabelecimento.email_clinica or not estabelecimento.senha_email_clinica:
+            logger.warning(f"Tentativa de envio de e-mail sem credenciais configuradas (estabelecimento {estabelecimento.id if estabelecimento else '?'}).")
             return False
 
-        remetente = conf_email.valor
-        senha = conf_senha.valor
-        
+        remetente = estabelecimento.email_clinica
+        senha = estabelecimento.senha_email_clinica
+
         msg = MIMEMultipart('related')
         msg['From'] = remetente
         msg['To'] = destinatario
         msg['Subject'] = assunto
-        
+
         msg_alternative = MIMEMultipart('alternative')
         msg.attach(msg_alternative)
         msg_alternative.attach(MIMEText(corpo, 'html'))
 
-        # Tentar anexar o logo se existir
-        logo_path = os.path.join(BASE_DIR, 'static', 'logo.png')
-        if os.path.exists(logo_path):
+        # Tentar anexar o logo do estabelecimento se existir, senão o logo genérico do sistema
+        logo_path = None
+        if estabelecimento.logo_filename:
+            candidato = os.path.join(app.config['UPLOAD_FOLDER'], 'logos', estabelecimento.logo_filename)
+            if os.path.exists(candidato):
+                logo_path = candidato
+        if not logo_path:
+            candidato = os.path.join(BASE_DIR, 'static', 'logo.png')
+            if os.path.exists(candidato):
+                logo_path = candidato
+        if logo_path:
             try:
                 with open(logo_path, 'rb') as f:
                     logo_data = f.read()
@@ -208,15 +211,119 @@ def datetimeformat(value, format='%d/%m/%Y às %H:%M'):
         return ""
     return value.strftime(format)
 
+# --- ISOLAMENTO MULTI-TENANT (ESTABELECIMENTOS) ---
+#
+# Cada clínica cadastrada é um "Estabelecimento". Os modelos que herdam de
+# TenantMixin pertencem a um estabelecimento e são automaticamente filtrados
+# pelo estabelecimento "ativo" no contexto atual — tanto em requests HTTP
+# (definido após o login, ver before_request mais abaixo) quanto em comandos
+# CLI/cron (definidos explicitamente via `usar_estabelecimento`).
+#
+# Por que um filtro automático em vez de `.filter_by(estabelecimento_id=...)`
+# em cada rota: aqui um "vazamento entre tenants" é um vazamento de prontuário
+# médico de uma clínica para outra. Confiar em lembrar de filtrar manualmente
+# em ~40 rotas é um risco alto demais para esse tipo de dado; um filtro central
+# no nível da sessão do SQLAlchemy garante a separação mesmo que uma rota nova
+# esqueça de filtrar.
+
+current_estabelecimento_id = contextvars.ContextVar('current_estabelecimento_id', default=None)
+
+
+@contextmanager
+def usar_estabelecimento(estabelecimento_id):
+    """Define o estabelecimento ativo no contexto atual (usado por comandos CLI/cron,
+    que não passam pelo before_request que faz isso automaticamente nas requests web)."""
+    token = current_estabelecimento_id.set(estabelecimento_id)
+    try:
+        yield
+    finally:
+        current_estabelecimento_id.reset(token)
+
+
+class TenantMixin:
+    """Mixin para modelos pertencentes a um Estabelecimento (isolamento entre clínicas)."""
+
+    @declared_attr
+    def estabelecimento_id(cls):
+        return db.Column(db.Integer, db.ForeignKey('estabelecimento.id'), nullable=False)
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _filtrar_por_estabelecimento_atual(execute_state):
+    """Injeta automaticamente `estabelecimento_id == <atual>` em todo SELECT
+    de modelos TenantMixin. Sem isso, qualquer `Modelo.query...` esquecido
+    sem filtro vazaria dados entre clínicas diferentes."""
+    if not execute_state.is_select:
+        return
+    estabelecimento_id = current_estabelecimento_id.get()
+    if estabelecimento_id is None:
+        return
+    execute_state.statement = execute_state.statement.options(
+        with_loader_criteria(
+            TenantMixin,
+            lambda cls: cls.estabelecimento_id == estabelecimento_id,
+            include_aliases=True,
+        )
+    )
+
+
+@event.listens_for(Session, "before_flush")
+def _preencher_estabelecimento_id_automaticamente(session, flush_context, instances):
+    """Preenche `estabelecimento_id` em registros novos com base no estabelecimento
+    ativo do contexto, para que a maioria das rotas não precise setar o campo
+    manualmente em todo `db.session.add(...)`. Se o código já setou o campo
+    explicitamente (ex: ao criar o primeiro admin de um novo estabelecimento),
+    esse valor é respeitado e não é sobrescrito."""
+    estabelecimento_id = current_estabelecimento_id.get()
+    if estabelecimento_id is None:
+        return
+    for obj in session.new:
+        if isinstance(obj, TenantMixin) and getattr(obj, 'estabelecimento_id', None) is None:
+            obj.estabelecimento_id = estabelecimento_id
+
+
 # --- MODELOS DO BANCO DE DADOS ---
 
-class User(UserMixin, db.Model):
+class Estabelecimento(db.Model):
+    """Modelo para a clínica/empresa cadastrada (tenant do SaaS)."""
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(150), nullable=False)
+    logo_filename = db.Column(db.String(200), nullable=True)
+
+    # Tema/marca (antes em Configuracao, agora por estabelecimento)
+    cor_novos_pacientes = db.Column(db.String(50), default='text-success')
+    cor_cabecalho = db.Column(db.String(50), default='bg-light navbar-light')
+    email_clinica = db.Column(db.String(120))
+    senha_email_clinica = db.Column(db.String(200))
+    dias_reenvio_lembrete_retorno = db.Column(db.Integer, default=7)
+
+    # Assinatura/trial
+    status = db.Column(db.String(20), default='trial', nullable=False)  # trial, ativo, inadimplente, cancelado
+    trial_termina_em = db.Column(db.DateTime)
+    data_criacao = db.Column(db.DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return f'<Estabelecimento {self.nome}>'
+
+    def em_periodo_de_leitura_apenas(self):
+        """True quando o estabelecimento não pode mais criar/editar/excluir dados."""
+        return self.status in ('inadimplente', 'cancelado')
+
+    def dias_restantes_trial(self):
+        if self.status != 'trial' or not self.trial_termina_em:
+            return 0
+        restante = (self.trial_termina_em - datetime.now()).days
+        return max(restante, 0)
+
+
+class User(TenantMixin, UserMixin, db.Model):
     """Modelo para o Profissional/Usuário do sistema"""
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
     perfil = db.Column(db.String(20), default='esteta', nullable=False)  # 'admin', 'secretaria', 'esteta'
-    
+    estabelecimento = db.relationship('Estabelecimento', backref='usuarios')
+
     def tem_permissao(self, permissao):
         """Verifica se o usuário tem uma permissão específica"""
         # Admin tem todas as permissões
@@ -231,11 +338,11 @@ class User(UserMixin, db.Model):
         }
         return permissao in permissoes.get(self.perfil, [])
 
-class Paciente(db.Model):
+class Paciente(TenantMixin, db.Model):
     """Modelo para o Paciente"""
     id = db.Column(db.Integer, primary_key=True)
     nome_completo = db.Column(db.String(150), nullable=False)
-    cpf = db.Column(db.String(14), unique=True, nullable=True) # CPF único, mas pode ser nulo
+    cpf = db.Column(db.String(14), nullable=True) # CPF único *dentro do estabelecimento* (ver UniqueConstraint)
     data_nascimento = db.Column(db.Date)
     telefone = db.Column(db.String(20))
     email = db.Column(db.String(120))
@@ -244,9 +351,12 @@ class Paciente(db.Model):
     atendimentos = db.relationship('Atendimento', backref='paciente', lazy=True, cascade="all, delete-orphan")
     anamneses = db.relationship('Anamnese', backref='paciente', lazy=True, cascade="all, delete-orphan")
     exames_fisicos = db.relationship('ExameFisico', backref='paciente', lazy=True, cascade="all, delete-orphan")
-    agendamentos = db.relationship('Agendamento', backref='paciente', lazy=True, cascade="all, delete-orphan")
 
-class Anamnese(db.Model):
+    __table_args__ = (
+        db.UniqueConstraint('estabelecimento_id', 'cpf', name='uq_paciente_estabelecimento_cpf'),
+    )
+
+class Anamnese(TenantMixin, db.Model):
     """Modelo para a Anamnese do Paciente"""
     id = db.Column(db.Integer, primary_key=True)
     data_anamnese = db.Column(db.DateTime, default=datetime.utcnow)
@@ -259,7 +369,7 @@ class Anamnese(db.Model):
     alergias = db.Column(db.Text)
     paciente_id = db.Column(db.Integer, db.ForeignKey('paciente.id'), nullable=False)
 
-class ExameFisico(db.Model):
+class ExameFisico(TenantMixin, db.Model):
     """Modelo para o Exame Físico do Paciente"""
     id = db.Column(db.Integer, primary_key=True)
     data_exame = db.Column(db.DateTime, default=datetime.utcnow)
@@ -277,19 +387,7 @@ class ExameFisico(db.Model):
     observacoes_gerais = db.Column(db.Text)
     paciente_id = db.Column(db.Integer, db.ForeignKey('paciente.id'), nullable=False)
 
-class Agendamento(db.Model):
-    """Modelo para Agendamentos de Pacientes"""
-    id = db.Column(db.Integer, primary_key=True)
-    data_hora_agendamento = db.Column(db.DateTime, nullable=False)
-    motivo_agendamento = db.Column(db.String(200))
-    status = db.Column(db.String(50), default='Agendado') # Ex: Agendado, Confirmado, Cancelado, Realizado
-    observacoes = db.Column(db.Text)
-    paciente_id = db.Column(db.Integer, db.ForeignKey('paciente.id'), nullable=False)
-    # Para lembretes futuros
-    data_hora_lembrete_enviado = db.Column(db.DateTime)
-    metodo_lembrete = db.Column(db.String(50)) # Ex: Email, SMS
-
-class Atendimento(db.Model):
+class Atendimento(TenantMixin, db.Model):
     """Modelo para o Prontuário/Registro de Atendimento"""
     id = db.Column(db.Integer, primary_key=True)
     data_atendimento = db.Column(db.DateTime, default=datetime.utcnow)
@@ -300,7 +398,10 @@ class Atendimento(db.Model):
     procedimentos = db.relationship('ProcedimentoAtendimento', backref='atendimento', lazy=True, cascade="all, delete-orphan")
 
 class ProcedimentoAtendimento(db.Model):
-    """Modelo para registrar múltiplos procedimentos em um atendimento."""
+    """Modelo para registrar múltiplos procedimentos em um atendimento.
+
+    Sem estabelecimento_id próprio: só é acessado através de `atendimento_id`,
+    e herda o isolamento do Atendimento pai (não precisa de filtro próprio)."""
     id = db.Column(db.Integer, primary_key=True)
     nome_procedimento = db.Column(db.String(200), nullable=False)
     observacoes_procedimento = db.Column(db.Text)
@@ -308,10 +409,10 @@ class ProcedimentoAtendimento(db.Model):
 
 # --- MODELOS PARA AGENDA ESTÉTICA ---
 
-class ServicoEstetico(db.Model):
+class ServicoEstetico(TenantMixin, db.Model):
     """Modelo para Serviços/Tratamentos Estéticos oferecidos"""
     id = db.Column(db.Integer, primary_key=True)
-    nome_servico = db.Column(db.String(150), nullable=False, unique=True)
+    nome_servico = db.Column(db.String(150), nullable=False)
     descricao = db.Column(db.Text)
     duracao_minutos = db.Column(db.Integer, default=60)  # Duração em minutos
     preco = db.Column(db.Float, default=0.0)
@@ -322,10 +423,14 @@ class ServicoEstetico(db.Model):
     dias_lembrete_retorno = db.Column(db.Integer, nullable=True)
     agendamentos = db.relationship('AgendamentoServico', backref='servico', lazy=True, cascade="all, delete-orphan")
 
+    __table_args__ = (
+        db.UniqueConstraint('estabelecimento_id', 'nome_servico', name='uq_servico_estabelecimento_nome'),
+    )
+
     def __repr__(self):
         return f'<ServicoEstetico {self.nome_servico}>'
 
-class ProfissionalEstetico(db.Model):
+class ProfissionalEstetico(TenantMixin, db.Model):
     """Modelo para Profissionais/Esteticistas"""
     id = db.Column(db.Integer, primary_key=True)
     usuario_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -350,7 +455,7 @@ class ProfissionalEstetico(db.Model):
                 return False
         return True
 
-class HorarioAtendimento(db.Model):
+class HorarioAtendimento(TenantMixin, db.Model):
     """Modelo para Horários de Disponibilidade do Profissional"""
     id = db.Column(db.Integer, primary_key=True)
     profissional_id = db.Column(db.Integer, db.ForeignKey('profissional_estetico.id'), nullable=False)
@@ -376,7 +481,7 @@ class HorarioAtendimento(db.Model):
     def get_nome_dia(self):
         return self.DIAS_SEMANA.get(self.dia_semana, "Desconhecido")
 
-class AgendamentoServico(db.Model):
+class AgendamentoServico(TenantMixin, db.Model):
     """Modelo para Agendamentos de Serviços Estéticos"""
     id = db.Column(db.Integer, primary_key=True)
     paciente_id = db.Column(db.Integer, db.ForeignKey('paciente.id'), nullable=False)
@@ -421,7 +526,7 @@ class AgendamentoServico(db.Model):
         delta = self.data_agendamento - agora
         return int(delta.total_seconds() / 60)
 
-class AuditLog(db.Model):
+class AuditLog(TenantMixin, db.Model):
     """Modelo para registrar logs de auditoria de ações importantes."""
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -434,17 +539,53 @@ class AuditLog(db.Model):
 
     user = db.relationship('User', foreign_keys=[user_id])
 
-class Configuracao(db.Model):
-    """Modelo para armazenar configurações dinâmicas do sistema."""
-    id = db.Column(db.Integer, primary_key=True)
-    chave = db.Column(db.String(50), unique=True, nullable=False)
-    valor = db.Column(db.String(200))
-
 # --- ROTAS DE AUTENTICAÇÃO ---
 
 @login_manager.user_loader
 def load_user(user_id):
     return db.session.get(User, int(user_id))
+
+# --- CONTEXTO DE TENANT E GATE DE ASSINATURA (a cada request) ---
+
+# Rotas que continuam acessíveis mesmo com o estabelecimento em modo
+# somente-leitura (trial vencido/inadimplente/cancelado).
+ENDPOINTS_ISENTOS_DO_GATE_DE_ASSINATURA = {'assinatura', 'assinatura_checkout', 'logout', 'static'}
+
+
+@app.before_request
+def _gerenciar_contexto_multi_tenant():
+    """Define o estabelecimento ativo da request e aplica o gate de assinatura.
+
+    A ordem aqui importa: o contexto é resetado para None *antes* de qualquer
+    acesso a `current_user` nesta função. Em servidores com múltiplos workers
+    sync (Gunicorn), a mesma thread atende várias requests em sequência, e o
+    ContextVar não é limpo automaticamente entre elas — se não resetarmos
+    primeiro, o próprio `load_user()` (chamado internamente pelo Flask-Login
+    ao acessar `current_user` por baixo dos panos) poderia ser filtrado pelo
+    estabelecimento de uma request *anterior*, atendida pela mesma thread, e
+    deixar de encontrar o usuário desta request.
+    """
+    current_estabelecimento_id.set(None)
+
+    if not current_user.is_authenticated:
+        return
+
+    estabelecimento = current_user.estabelecimento
+    current_estabelecimento_id.set(estabelecimento.id if estabelecimento else None)
+
+    if not estabelecimento:
+        return
+
+    # Expira o trial de forma "lazy", checado a cada request, sem depender de cron.
+    if estabelecimento.status == 'trial' and estabelecimento.trial_termina_em and datetime.now() > estabelecimento.trial_termina_em:
+        estabelecimento.status = 'inadimplente'
+        db.session.commit()
+
+    if estabelecimento.em_periodo_de_leitura_apenas():
+        eh_escrita = request.method in ('POST', 'PUT', 'PATCH', 'DELETE')
+        if eh_escrita and request.endpoint not in ENDPOINTS_ISENTOS_DO_GATE_DE_ASSINATURA:
+            flash("Sua assinatura expirou. Assine para continuar criando e editando registros.", "warning")
+            return redirect(url_for('assinatura'))
 
 # --- HEALTH CHECK ---
 
@@ -579,67 +720,71 @@ def is_cpf_valid(cpf: str) -> bool:
     return True
 
 @app.route("/registro", methods=["GET", "POST"])
+@login_required
+@requer_permissao('gerenciar_usuarios')
 def registro():
-    """Página para criar novo usuário"""
+    """Cria um novo usuário dentro do estabelecimento do admin logado.
+
+    Para criar uma clínica nova (com seu próprio estabelecimento), veja
+    `/criar-clinica` — esta rota é só para adicionar membros da equipe a uma
+    clínica já existente.
+    """
     form = RegistroForm()
-    eh_admin = current_user.is_authenticated and current_user.perfil == 'admin'
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
         password = request.form.get("password", "")
         password_confirm = request.form.get("password_confirm", "")
-        perfil = request.form.get("perfil", "esteta")
-        
-        # Validações
+
         if not username:
             flash("Nome de usuário é obrigatório.", "warning")
-            return render_template("registro_clinica.html", form=form, eh_admin=eh_admin)
-        
+            return render_template("registro_clinica.html", form=form)
+
         if len(username) < 3:
             flash("Nome de usuário deve ter pelo menos 3 caracteres.", "warning")
-            return render_template("registro_clinica.html", form=form, eh_admin=eh_admin)
-        
-        if User.query.filter_by(username=username).first():
+            return render_template("registro_clinica.html", form=form)
+
+        # Username é único globalmente (entre todos os estabelecimentos), pois
+        # o login não pede qual clínica — então essa checagem precisa ignorar
+        # o filtro automático por tenant (que filtraria só dentro da clínica atual).
+        with usar_estabelecimento(None):
+            usuario_existente = User.query.filter_by(username=username).first()
+        if usuario_existente:
             flash("Este usuário já existe. Escolha outro nome.", "danger")
-            return render_template("registro_clinica.html", form=form, eh_admin=eh_admin)
-        
+            return render_template("registro_clinica.html", form=form)
+
         # Validação de complexidade da senha
         if len(password) < 8 or not re.search("[a-z]", password) or \
            not re.search("[A-Z]", password) or not re.search("[0-9]", password) or \
            not re.search("[!@#$%^&*()-_=+]", password):
             flash(
                 "A senha deve ter pelo menos 8 caracteres, incluindo uma letra maiúscula, "
-                "uma minúscula, um número e um símbolo (!@#$%^&*).", 
+                "uma minúscula, um número e um símbolo (!@#$%^&*).",
                 "warning"
             )
-            return render_template("registro_clinica.html", form=form, eh_admin=eh_admin)
-        
+            return render_template("registro_clinica.html", form=form)
+
         if password != password_confirm:
             flash("As senhas não correspondem.", "warning")
-            return render_template("registro_clinica.html", form=form, eh_admin=eh_admin)
-        
-        # Atribuição de perfil controlada pelo backend
-        if current_user.is_authenticated and current_user.perfil == 'admin':
-            perfil_selecionado = request.form.get("perfil", "esteta")
-            perfil = perfil_selecionado if perfil_selecionado in ['admin', 'secretaria', 'esteta'] else 'esteta'
-        else:
-            perfil = 'esteta'  # Usuários normais sempre são criados como 'esteta'
-        
-        # Criar novo usuário
+            return render_template("registro_clinica.html", form=form)
+
+        perfil_selecionado = request.form.get("perfil", "esteta")
+        perfil = perfil_selecionado if perfil_selecionado in ['admin', 'secretaria', 'esteta'] else 'esteta'
+
         hashed_password = generate_password_hash(password)
-        novo_usuario = User(username=username, password_hash=hashed_password, perfil=perfil)
+        novo_usuario = User(
+            username=username,
+            password_hash=hashed_password,
+            perfil=perfil,
+            estabelecimento_id=current_user.estabelecimento_id,
+        )
         db.session.add(novo_usuario)
         db.session.commit()
 
-        # Se o admin criou o usuário, redireciona para a página de gerenciamento
-        if current_user.is_authenticated and current_user.perfil == 'admin':
-            flash(f"Usuário '{username}' criado com sucesso! Perfil: {perfil.upper()}.", "success")
-            return redirect(url_for("gerenciar_usuarios"))
-        else:
-            flash(f"Usuário '{username}' criado com sucesso! Você pode fazer login agora.", "success")
-            return redirect(url_for("login"))
-    
-    return render_template("registro_clinica.html", form=form, eh_admin=eh_admin)
+        flash(f"Usuário '{username}' criado com sucesso! Perfil: {perfil.upper()}.", "success")
+        return redirect(url_for("gerenciar_usuarios"))
+
+    return render_template("registro_clinica.html", form=form)
 
 @app.route("/logout")
 @login_required
@@ -766,29 +911,90 @@ def resetar_senha_usuario(usuario_id):
     flash(f"A senha do usuário '{usuario.username}' foi resetada para '{nova_senha_padrao}'. O usuário deverá alterá-la no primeiro acesso.", "success")
     return redirect(url_for("gerenciar_usuarios"))
 
-# Rota para criar o primeiro usuário (requer SETUP_ENABLED=1 na variável de ambiente)
-@app.route("/setup")
-def setup():
-    if not os.environ.get("SETUP_ENABLED"):
-        return "Rota /setup desativada. Configure SETUP_ENABLED=1 para primeiro acesso.", 403
+@app.route("/criar-clinica", methods=["GET", "POST"])
+def criar_clinica():
+    """Cadastro self-service: cria um novo Estabelecimento (clínica) com seu
+    primeiro usuário administrador, e inicia o período de trial gratuito.
 
-    # Verifica se já existe algum usuário
-    if User.query.first():
-        return "Setup já foi realizado. O usuário principal já existe.", 403
- 
-    # Cria um usuário inicial (use uma senha forte em produção!)
-    username = os.environ.get("SETUP_USERNAME", "admin")
-    password = os.environ.get("SETUP_PASSWORD")
-    if not password:
-        return "SETUP_PASSWORD não configurada na variável de ambiente.", 400
+    Substitui o antigo bootstrap manual via `/setup` — agora qualquer pessoa
+    pode criar sua própria clínica diretamente por aqui.
+    """
+    if current_user.is_authenticated:
+        return redirect(url_for("home"))
 
-    hashed_password = generate_password_hash(password)
-    new_user = User(username=username, password_hash=hashed_password, perfil='admin')
-    db.session.add(new_user)
-    db.session.commit()
+    if request.method == "POST":
+        nome_clinica = request.form.get("nome_clinica", "").strip()
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        password_confirm = request.form.get("password_confirm", "")
 
-    # Não exibe a senha na resposta por segurança
-    return f"Usuário '{username}' criado com sucesso como ADMINISTRADOR. Acesse <a href='{url_for('login')}'>/login</a>."
+        if not nome_clinica:
+            flash("O nome da clínica é obrigatório.", "warning")
+            return render_template("criar_clinica.html")
+
+        if not username or len(username) < 3:
+            flash("Nome de usuário deve ter pelo menos 3 caracteres.", "warning")
+            return render_template("criar_clinica.html")
+
+        if User.query.filter_by(username=username).first():
+            flash("Este nome de usuário já está em uso. Escolha outro.", "danger")
+            return render_template("criar_clinica.html")
+
+        if len(password) < 8 or not re.search("[a-z]", password) or \
+           not re.search("[A-Z]", password) or not re.search("[0-9]", password) or \
+           not re.search("[!@#$%^&*()-_=+]", password):
+            flash(
+                "A senha deve ter pelo menos 8 caracteres, incluindo uma letra maiúscula, "
+                "uma minúscula, um número e um símbolo (!@#$%^&*).",
+                "warning"
+            )
+            return render_template("criar_clinica.html")
+
+        if password != password_confirm:
+            flash("As senhas não correspondem.", "warning")
+            return render_template("criar_clinica.html")
+
+        novo_estabelecimento = Estabelecimento(
+            nome=nome_clinica,
+            status='trial',
+            trial_termina_em=datetime.now() + timedelta(days=30),
+        )
+        db.session.add(novo_estabelecimento)
+        db.session.flush()  # garante novo_estabelecimento.id antes de criar o admin
+
+        admin_user = User(
+            username=username,
+            password_hash=generate_password_hash(password),
+            perfil='admin',
+            estabelecimento_id=novo_estabelecimento.id,
+        )
+        db.session.add(admin_user)
+        db.session.commit()
+
+        login_user(admin_user)
+        flash(f"Clínica '{nome_clinica}' criada com sucesso! Você tem 30 dias de teste grátis.", "success")
+        return redirect(url_for("home"))
+
+    return render_template("criar_clinica.html")
+
+@app.route("/assinatura")
+@login_required
+def assinatura():
+    """Mostra o status do trial/assinatura do estabelecimento e permite assinar."""
+    estabelecimento = current_user.estabelecimento
+    return render_template("assinatura.html", estabelecimento=estabelecimento)
+
+@app.route("/assinatura/checkout", methods=["POST"])
+@login_required
+def assinatura_checkout():
+    """Ponto de extensão para a integração com o gateway de pagamento.
+
+    Ainda não há gateway escolhido/conectado — quando houver (Stripe, Mercado
+    Pago, etc.), esta rota deve iniciar a cobrança e, via webhook, atualizar
+    `estabelecimento.status` para 'ativo' após a confirmação do pagamento.
+    """
+    flash("A integração de pagamento ainda será configurada em breve. Entre em contato com o suporte para assinar.", "info")
+    return redirect(url_for('assinatura'))
 
 @app.route("/perfil", methods=["GET", "POST"])
 @login_required
@@ -990,7 +1196,6 @@ def novo_paciente():
     return render_template("novo_paciente.html", form=form)
 
 @app.route("/pacientes/<int:paciente_id>/editar", methods=["GET", "POST"])
-@csrf.exempt
 @login_required
 def editar_paciente(paciente_id):
     """Formulário para editar os dados de um paciente."""
@@ -1027,7 +1232,6 @@ def editar_paciente(paciente_id):
     return render_template("editar_paciente.html", paciente=paciente)
 
 @app.route("/pacientes/<int:paciente_id>/deletar", methods=["POST"])
-@csrf.exempt
 @login_required
 def deletar_paciente(paciente_id):
     paciente = db.session.get(Paciente, paciente_id) # CORREÇÃO: Uso de db.session.get
@@ -1055,7 +1259,6 @@ def ver_paciente(paciente_id):
     return render_template("ver_paciente.html", paciente=paciente, atendimentos=atendimentos, agendamentos_servicos=paciente.agendamentos_servicos)
 
 @app.route("/pacientes/<int:paciente_id>/atendimento/novo", methods=["POST"])
-@csrf.exempt
 @login_required
 def novo_atendimento(paciente_id):
     """Adiciona um novo registro de atendimento para um paciente."""
@@ -1125,7 +1328,6 @@ def novo_atendimento(paciente_id):
     return redirect(url_for("ver_paciente", paciente_id=paciente_id))
 
 @app.route("/atendimento/procedimento/<int:procedimento_id>/deletar", methods=["POST"])
-@csrf.exempt
 @login_required
 def deletar_procedimento(procedimento_id):
     """Remove um procedimento de um atendimento."""
@@ -1147,7 +1349,6 @@ def deletar_procedimento(procedimento_id):
     return redirect(url_for("home"))
 
 @app.route("/pacientes/<int:paciente_id>/anamnese/nova", methods=["GET", "POST"])
-@csrf.exempt
 @login_required
 def nova_anamnese(paciente_id):
     """Adiciona um novo registro de anamnese para um paciente."""
@@ -1175,7 +1376,6 @@ def nova_anamnese(paciente_id):
     return render_template("nova_anamnese.html", paciente=paciente)
 
 @app.route("/pacientes/<int:paciente_id>/exame_fisico/novo", methods=["GET", "POST"])
-@csrf.exempt
 @login_required
 def novo_exame_fisico(paciente_id):
     """Adiciona um novo registro de exame físico para um paciente."""
@@ -1213,7 +1413,6 @@ def novo_exame_fisico(paciente_id):
     return render_template("novo_exame_fisico.html", paciente=paciente)
 
 @app.route("/pacientes/<int:paciente_id>/anamnese/<int:anamnese_id>/editar", methods=["GET", "POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('atender')
 def editar_anamnese(paciente_id, anamnese_id):
@@ -1244,7 +1443,6 @@ def editar_anamnese(paciente_id, anamnese_id):
 
 
 @app.route("/pacientes/<int:paciente_id>/exame_fisico/<int:exame_id>/editar", methods=["GET", "POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('atender')
 def editar_exame_fisico(paciente_id, exame_id):
@@ -1350,7 +1548,6 @@ def agenda_calendario():
                          profissionais_dados=profissionais_dados)
 
 @app.route("/admin/horarios-profissional/<int:profissional_id>", methods=["GET", "POST"])
-@csrf.exempt
 @login_required
 def gerenciar_horarios_profissional(profissional_id):
     """Gerencia horários de disponibilidade de um profissional"""
@@ -1514,8 +1711,7 @@ def agendar_servico(paciente_id):
 
             # Enviar e-mail de confirmação
             if paciente.email:
-                assunto = "Confirmação de Agendamento - Clínica Estética"
-                assunto = "Confirmação de Agendamento - Nome da Sua Clínica"
+                assunto = f"Confirmação de Agendamento - {current_user.estabelecimento.nome}"
                 corpo = f"""
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
                     <div style="background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 1px solid #e0e0e0;">
@@ -1536,12 +1732,11 @@ def agendar_servico(paciente_id):
                         <p style="color: #555; font-size: 14px; text-align: center;">Caso precise reagendar, entre em contato conosco.</p>
                     </div>
                     <div style="background-color: #f8f9fa; padding: 15px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #e0e0e0;">
-                        <p style="margin: 0;">&copy; {datetime.now().year} Clínica Estética. Todos os direitos reservados.</p>
-                        <p style="margin: 0;">&copy; {datetime.now().year} Nome da Sua Clínica. Todos os direitos reservados.</p>
+                        <p style="margin: 0;">&copy; {datetime.now().year} {current_user.estabelecimento.nome}. Todos os direitos reservados.</p>
                     </div>
                 </div>
                 """
-                enviar_email(paciente.email, assunto, corpo)
+                enviar_email(current_user.estabelecimento, paciente.email, assunto, corpo)
             
             logger.info(f"Agendamento criado: {paciente.nome_completo} - {novo_agendamento.servico.nome_servico} em {data_hora}")
             flash(f"Serviço agendado com sucesso para {data_hora.strftime('%d/%m/%Y às %H:%M')}!", "success")
@@ -1627,7 +1822,6 @@ def horarios_disponiveis(profissional_id):
     return jsonify({'horarios': horarios_disponiveis})
 
 @app.route("/agendamento/<int:agendamento_id>/editar", methods=["GET", "POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('agendar')
 def editar_agendamento(agendamento_id):
@@ -1711,7 +1905,6 @@ def dias_disponiveis_profissional(profissional_id):
 
 
 @app.route("/agenda/<int:agendamento_id>/cancelar", methods=["POST"])
-@csrf.exempt
 @login_required
 def cancelar_agendamento(agendamento_id):
     """Cancela um agendamento"""
@@ -1722,7 +1915,11 @@ def cancelar_agendamento(agendamento_id):
         return redirect(url_for("agenda"))
     
     # Verifica permissão (pode cancelar o próprio agendamento ou ser admin)
-    if current_user.perfil != 'admin' and current_user.perfil_profissional.id != agendamento.profissional_id:
+    # CORREÇÃO: perfil_profissional é uma lista (relationship sem uselist=False),
+    # não um objeto único — acessar `.id` direto quebrava para qualquer perfil
+    # não-admin (ex: secretaria) que tentasse cancelar um agendamento.
+    perfil_profissional = current_user.perfil_profissional[0] if current_user.perfil_profissional else None
+    if current_user.perfil != 'admin' and (not perfil_profissional or perfil_profissional.id != agendamento.profissional_id):
         flash("Você não tem permissão para cancelar este agendamento.", "danger")
         return redirect(url_for("agenda"))
     
@@ -1738,7 +1935,6 @@ def cancelar_agendamento(agendamento_id):
     return redirect(url_for("agenda"))
 
 @app.route("/agenda/<int:agendamento_id>/confirmar", methods=["POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('agendar')
 def confirmar_agendamento(agendamento_id):
@@ -1761,7 +1957,6 @@ def confirmar_agendamento(agendamento_id):
     return redirect(url_for("agenda"))
 
 @app.route("/agenda/<int:agendamento_id>/iniciar", methods=["POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('atender')
 def iniciar_atendimento(agendamento_id):
@@ -1780,7 +1975,6 @@ def iniciar_atendimento(agendamento_id):
     return redirect(url_for("ver_paciente", paciente_id=agendamento.paciente_id))
 
 @app.route("/agenda/<int:agendamento_id>/finalizar", methods=["POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('atender')
 def finalizar_atendimento(agendamento_id):
@@ -1810,7 +2004,6 @@ def listar_servicos():
     return render_template("listar_servicos.html", servicos=servicos)
 
 @app.route("/admin/servicos/<int:servico_id>/editar", methods=["POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('gerenciar_servicos')
 def editar_servico(servico_id):
@@ -1838,7 +2031,6 @@ def editar_servico(servico_id):
     return redirect(url_for('listar_servicos'))
 
 @app.route("/admin/servicos/<int:servico_id>/deletar", methods=["POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('gerenciar_servicos')
 def deletar_servico(servico_id):
@@ -1858,7 +2050,6 @@ def deletar_servico(servico_id):
     return redirect(url_for('listar_servicos'))
 
 @app.route("/admin/servicos/novo", methods=["GET", "POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('gerenciar_servicos')
 def novo_servico():
@@ -1944,7 +2135,6 @@ def novo_profissional():
     return render_template("novo_profissional.html", form=form)
 
 @app.route("/admin/profissionais/<int:profissional_id>/editar", methods=["GET", "POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('gerenciar_profissionais')
 def editar_profissional(profissional_id):
@@ -1988,7 +2178,6 @@ def editar_profissional(profissional_id):
     return render_template("editar_profissional.html", profissional=profissional, form=form)
 
 @app.route("/admin/profissionais/<int:profissional_id>/deletar", methods=["POST"])
-@csrf.exempt
 @login_required
 @requer_permissao('gerenciar_profissionais')
 def deletar_profissional(profissional_id):
@@ -2024,79 +2213,59 @@ def auditoria_logs():
 @login_required
 @requer_permissao('gerenciar_usuarios') # Apenas admins podem personalizar
 def personalizar_tema():
-    """Página para personalizar as cores do sistema."""
+    """Página para personalizar a marca/tema do estabelecimento (cores, logo, e-mail)."""
+    estabelecimento = current_user.estabelecimento
+
     if request.method == "POST":
+        nome = request.form.get("nome")
         cor_novos = request.form.get("cor_novos_pacientes")
         cor_cabecalho = request.form.get("cor_cabecalho")
         email_clinica = request.form.get("email_clinica")
         senha_email = request.form.get("senha_email_clinica")
         dias_reenvio_retorno = request.form.get("dias_reenvio_lembrete_retorno", type=int)
 
+        if nome:
+            estabelecimento.nome = nome
         if cor_novos:
-            conf = Configuracao.query.filter_by(chave='cor_novos_pacientes').first()
-            if not conf:
-                conf = Configuracao(chave='cor_novos_pacientes')
-                db.session.add(conf)
-            conf.valor = cor_novos
-            
+            estabelecimento.cor_novos_pacientes = cor_novos
         if cor_cabecalho:
-            conf = Configuracao.query.filter_by(chave='cor_cabecalho').first()
-            if not conf:
-                conf = Configuracao(chave='cor_cabecalho')
-                db.session.add(conf)
-            conf.valor = cor_cabecalho
-
-        if email_clinica is not None: # Pode ser string vazia para limpar
-            conf = Configuracao.query.filter_by(chave='email_clinica').first()
-            if not conf:
-                conf = Configuracao(chave='email_clinica')
-                db.session.add(conf)
-            conf.valor = email_clinica
-
+            estabelecimento.cor_cabecalho = cor_cabecalho
+        if email_clinica is not None:  # Pode ser string vazia para limpar
+            estabelecimento.email_clinica = email_clinica
         if senha_email is not None:
-            conf = Configuracao.query.filter_by(chave='senha_email_clinica').first()
-            if not conf:
-                conf = Configuracao(chave='senha_email_clinica')
-                db.session.add(conf)
-            conf.valor = senha_email
-
+            estabelecimento.senha_email_clinica = senha_email
         if dias_reenvio_retorno and dias_reenvio_retorno > 0:
-            conf = Configuracao.query.filter_by(chave='dias_reenvio_lembrete_retorno').first()
-            if not conf:
-                conf = Configuracao(chave='dias_reenvio_lembrete_retorno')
-                db.session.add(conf)
-            conf.valor = str(dias_reenvio_retorno)
+            estabelecimento.dias_reenvio_lembrete_retorno = dias_reenvio_retorno
+
+        logo_file = request.files.get('logo')
+        if logo_file and logo_file.filename:
+            if not allowed_file(logo_file.filename):
+                flash("Formato de logo não permitido. Use apenas .jpg, .jpeg ou .png", "warning")
+                return redirect(url_for('personalizar_tema'))
+            ext = logo_file.filename.rsplit('.', 1)[1].lower()
+            logo_filename = f"{uuid.uuid4().hex}.{ext}"
+            pasta_logos = os.path.join(app.config['UPLOAD_FOLDER'], 'logos')
+            os.makedirs(pasta_logos, exist_ok=True)
+            logo_file.save(os.path.join(pasta_logos, logo_filename))
+            estabelecimento.logo_filename = logo_filename
 
         db.session.commit()
         flash("Aparência atualizada com sucesso!", "success")
+        return redirect(url_for('personalizar_tema'))
 
-    # Busca configuração atual (padrão verde/success se não existir)
-    conf = Configuracao.query.filter_by(chave='cor_novos_pacientes').first()
-    cor_atual = conf.valor if conf else 'text-success'
-    
-    # Busca configuração do cabeçalho
-    conf_cab = Configuracao.query.filter_by(chave='cor_cabecalho').first()
-    cor_cabecalho = conf_cab.valor if conf_cab else 'bg-light navbar-light'
-    
-    # Busca configurações de email
-    conf_email = Configuracao.query.filter_by(chave='email_clinica').first()
-    email_clinica = conf_email.valor if conf_email else ''
-    
-    conf_senha = Configuracao.query.filter_by(chave='senha_email_clinica').first()
-    senha_email = conf_senha.valor if conf_senha else ''
-
-    conf_reenvio = Configuracao.query.filter_by(chave='dias_reenvio_lembrete_retorno').first()
-    dias_reenvio_retorno = conf_reenvio.valor if conf_reenvio else '7'
-
-    return render_template("personalizar_tema.html", cor_atual=cor_atual, cor_cabecalho=cor_cabecalho,
-                           email_clinica=email_clinica, senha_email=senha_email,
-                           dias_reenvio_retorno=dias_reenvio_retorno)
+    return render_template("personalizar_tema.html", estabelecimento=estabelecimento)
 
 @app.route("/uploads/<filename>")
 @login_required
 def uploaded_file(filename):
     """Serve os arquivos de imagem que foram upados."""
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+@app.route("/uploads/logos/<filename>")
+@login_required
+def uploaded_logo(filename):
+    """Serve as logos de estabelecimentos."""
+    return send_from_directory(os.path.join(app.config["UPLOAD_FOLDER"], "logos"), filename)
 
 @app.route("/api/dashboard-stats")
 @login_required
@@ -2364,69 +2533,66 @@ def criar_servicos_padrao():
         print(f"Erro ao criar serviços: {str(e)}")
         db.session.rollback()
 
-def criar_configuracoes_padrao():
-    """Define configurações iniciais do sistema"""
-    try:
-        if not Configuracao.query.filter_by(chave='cor_novos_pacientes').first():
-            db.session.add(Configuracao(chave='cor_novos_pacientes', valor='text-success'))
-            db.session.commit()
-    except Exception as e:
-        print(f"Erro ao criar configurações: {e}")
-
 def verificar_lembretes_diarios():
-    """Verifica agendamentos para o dia seguinte e envia lembretes.
+    """Verifica agendamentos para o dia seguinte e envia lembretes, em todos os
+    estabelecimentos ativos.
 
     Executa uma única passada (sem se reagendar). Em produção, é disparada
     periodicamente pelo job de cron `flask lembretes-diarios` (ver render.yaml),
     não por uma thread dentro do processo web — isso evita que cada worker do
     Gunicorn dispare seu próprio agendamento e duplique e-mails.
+
+    Roda explicitamente um estabelecimento por vez (`usar_estabelecimento`),
+    já que comandos CLI não passam pelo before_request que define o
+    estabelecimento ativo nas requests web.
     """
     with app.app_context():
-        try:
-            amanha = datetime.now().date() + timedelta(days=1)
-            inicio = datetime.combine(amanha, time.min)
-            fim = datetime.combine(amanha, time.max)
-            
-            agendamentos = AgendamentoServico.query.filter(
-                AgendamentoServico.data_agendamento >= inicio,
-                AgendamentoServico.data_agendamento <= fim,
-                AgendamentoServico.status == 'agendado',
-                AgendamentoServico.data_hora_lembrete_enviado.is_(None)
-            ).all()
-            
-            for ag in agendamentos:
-                if ag.paciente.email:
-                    assunto = f"Lembrete de Consulta Amanhã - {ag.paciente.nome_completo}"
-                    corpo = f"""
-                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
-                        <div style="background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 1px solid #e0e0e0;">
-                            <img src="cid:logo_clinica" alt="Logo Clínica" style="max-height: 80px;">
-                        </div>
-                        <div style="padding: 30px; background-color: #ffffff;">
-                            <h2 style="color: #ffc107; margin-top: 0; text-align: center;">Lembrete de Consulta</h2>
-                            <p style="color: #555; font-size: 16px;">Olá, <strong>{ag.paciente.nome_completo}</strong>!</p>
-                            <p style="color: #555; font-size: 16px;">Este é um lembrete do seu agendamento para <strong>amanhã</strong>:</p>
-                            
-                            <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
-                                <p style="margin: 5px 0; color: #333;"><strong>Serviço:</strong> {ag.servico.nome_servico}</p>
-                                <p style="margin: 5px 0; color: #333;"><strong>Horário:</strong> {ag.data_agendamento.strftime('%H:%M')}</p>
-                                <p style="margin: 5px 0; color: #333;"><strong>Profissional:</strong> {ag.profissional.usuario.username.upper()}</p>
+        for estabelecimento in Estabelecimento.query.filter(Estabelecimento.status.in_(['trial', 'ativo'])).all():
+            with usar_estabelecimento(estabelecimento.id):
+                try:
+                    amanha = datetime.now().date() + timedelta(days=1)
+                    inicio = datetime.combine(amanha, time.min)
+                    fim = datetime.combine(amanha, time.max)
+
+                    agendamentos = AgendamentoServico.query.filter(
+                        AgendamentoServico.data_agendamento >= inicio,
+                        AgendamentoServico.data_agendamento <= fim,
+                        AgendamentoServico.status == 'agendado',
+                        AgendamentoServico.data_hora_lembrete_enviado.is_(None)
+                    ).all()
+
+                    for ag in agendamentos:
+                        if ag.paciente.email:
+                            assunto = f"Lembrete de Consulta Amanhã - {ag.paciente.nome_completo}"
+                            corpo = f"""
+                            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+                                <div style="background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 1px solid #e0e0e0;">
+                                    <img src="cid:logo_clinica" alt="Logo Clínica" style="max-height: 80px;">
+                                </div>
+                                <div style="padding: 30px; background-color: #ffffff;">
+                                    <h2 style="color: #ffc107; margin-top: 0; text-align: center;">Lembrete de Consulta</h2>
+                                    <p style="color: #555; font-size: 16px;">Olá, <strong>{ag.paciente.nome_completo}</strong>!</p>
+                                    <p style="color: #555; font-size: 16px;">Este é um lembrete do seu agendamento para <strong>amanhã</strong>:</p>
+
+                                    <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
+                                        <p style="margin: 5px 0; color: #333;"><strong>Serviço:</strong> {ag.servico.nome_servico}</p>
+                                        <p style="margin: 5px 0; color: #333;"><strong>Horário:</strong> {ag.data_agendamento.strftime('%H:%M')}</p>
+                                        <p style="margin: 5px 0; color: #333;"><strong>Profissional:</strong> {ag.profissional.usuario.username.upper()}</p>
+                                    </div>
+
+                                    <p style="color: #555; font-size: 14px; text-align: center;">Estamos aguardando você!</p>
+                                </div>
+                                <div style="background-color: #f8f9fa; padding: 15px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #e0e0e0;">
+                                    <p style="margin: 0;">&copy; {datetime.now().year} {estabelecimento.nome}. Todos os direitos reservados.</p>
+                                </div>
                             </div>
-                            
-                            <p style="color: #555; font-size: 14px; text-align: center;">Estamos aguardando você!</p>
-                        </div>
-                        <div style="background-color: #f8f9fa; padding: 15px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #e0e0e0;">
-                            <p style="margin: 0;">&copy; {datetime.now().year} Clínica Estética. Todos os direitos reservados.</p>
-                            <p style="margin: 0;">&copy; {datetime.now().year} Nome da Sua Clínica. Todos os direitos reservados.</p>
-                        </div>
-                    </div>
-                    """
-                    if enviar_email(ag.paciente.email, assunto, corpo):
-                        ag.data_hora_lembrete_enviado = datetime.now()
-                        ag.metodo_lembrete = 'Email'
-                        db.session.commit()
-        except Exception as e:
-            logger.error(f"Erro ao verificar lembretes: {e}")
+                            """
+                            if enviar_email(estabelecimento, ag.paciente.email, assunto, corpo):
+                                ag.data_hora_lembrete_enviado = datetime.now()
+                                ag.metodo_lembrete = 'Email'
+                                db.session.commit()
+                except Exception as e:
+                    logger.error(f"Erro ao verificar lembretes do estabelecimento {estabelecimento.id}: {e}")
 
 
 def verificar_lembretes_retorno():
@@ -2436,109 +2602,108 @@ def verificar_lembretes_retorno():
     já marcado), esta função identifica pacientes que fizeram um serviço com
     recorrência configurada (`ServicoEstetico.dias_lembrete_retorno`) e que já
     passaram do prazo para repeti-lo, mas ainda não reagendaram. O lembrete se
-    repete periodicamente (cadência global em `Configuracao.dias_reenvio_lembrete_retorno`,
+    repete periodicamente (cadência em `Estabelecimento.dias_reenvio_lembrete_retorno`,
     padrão 7 dias) até o paciente ter um novo agendamento futuro do mesmo
     serviço (com status diferente de 'cancelado').
 
-    Executa uma única passada; é chamada pelo comando `flask lembretes-retorno`,
-    agendado via cron (ver render.yaml).
+    Executa uma única passada por estabelecimento ativo; é chamada pelo
+    comando `flask lembretes-retorno`, agendado via cron (ver render.yaml).
     """
     with app.app_context():
-        try:
-            conf_cadencia = Configuracao.query.filter_by(chave='dias_reenvio_lembrete_retorno').first()
-            try:
-                dias_reenvio = int(conf_cadencia.valor) if conf_cadencia and conf_cadencia.valor else 7
-            except ValueError:
-                dias_reenvio = 7
+        for estabelecimento in Estabelecimento.query.filter(Estabelecimento.status.in_(['trial', 'ativo'])).all():
+            with usar_estabelecimento(estabelecimento.id):
+                try:
+                    dias_reenvio = estabelecimento.dias_reenvio_lembrete_retorno or 7
+                    agora = datetime.now()
+                    servicos = ServicoEstetico.query.filter(
+                        ServicoEstetico.dias_lembrete_retorno.isnot(None),
+                        ServicoEstetico.dias_lembrete_retorno > 0
+                    ).all()
 
-            agora = datetime.now()
-            servicos = ServicoEstetico.query.filter(
-                ServicoEstetico.dias_lembrete_retorno.isnot(None),
-                ServicoEstetico.dias_lembrete_retorno > 0
-            ).all()
+                    for servico in servicos:
+                        # Último atendimento finalizado de cada paciente para este serviço
+                        subq = db.session.query(
+                            AgendamentoServico.paciente_id,
+                            func.max(AgendamentoServico.data_agendamento).label('ultima_data')
+                        ).filter(
+                            AgendamentoServico.servico_id == servico.id,
+                            AgendamentoServico.status == 'finalizado'
+                        ).group_by(AgendamentoServico.paciente_id).subquery()
 
-            for servico in servicos:
-                # Último atendimento finalizado de cada paciente para este serviço
-                subq = db.session.query(
-                    AgendamentoServico.paciente_id,
-                    func.max(AgendamentoServico.data_agendamento).label('ultima_data')
-                ).filter(
-                    AgendamentoServico.servico_id == servico.id,
-                    AgendamentoServico.status == 'finalizado'
-                ).group_by(AgendamentoServico.paciente_id).subquery()
+                        ultimos_atendimentos = db.session.query(AgendamentoServico).join(
+                            subq,
+                            db.and_(
+                                AgendamentoServico.paciente_id == subq.c.paciente_id,
+                                AgendamentoServico.data_agendamento == subq.c.ultima_data
+                            )
+                        ).filter(
+                            AgendamentoServico.servico_id == servico.id,
+                            AgendamentoServico.status == 'finalizado'
+                        ).all()
 
-                ultimos_atendimentos = db.session.query(AgendamentoServico).join(
-                    subq,
-                    db.and_(
-                        AgendamentoServico.paciente_id == subq.c.paciente_id,
-                        AgendamentoServico.data_agendamento == subq.c.ultima_data
-                    )
-                ).filter(
-                    AgendamentoServico.servico_id == servico.id,
-                    AgendamentoServico.status == 'finalizado'
-                ).all()
+                        for atendimento in ultimos_atendimentos:
+                            data_prevista = atendimento.data_agendamento + timedelta(days=servico.dias_lembrete_retorno)
+                            if agora < data_prevista:
+                                continue
 
-                for atendimento in ultimos_atendimentos:
-                    data_prevista = atendimento.data_agendamento + timedelta(days=servico.dias_lembrete_retorno)
-                    if agora < data_prevista:
-                        continue
+                            ja_reagendou = AgendamentoServico.query.filter(
+                                AgendamentoServico.paciente_id == atendimento.paciente_id,
+                                AgendamentoServico.servico_id == servico.id,
+                                AgendamentoServico.status != 'cancelado',
+                                AgendamentoServico.data_agendamento > atendimento.data_agendamento
+                            ).first()
+                            if ja_reagendou:
+                                continue
 
-                    ja_reagendou = AgendamentoServico.query.filter(
-                        AgendamentoServico.paciente_id == atendimento.paciente_id,
-                        AgendamentoServico.servico_id == servico.id,
-                        AgendamentoServico.status != 'cancelado',
-                        AgendamentoServico.data_agendamento > atendimento.data_agendamento
-                    ).first()
-                    if ja_reagendou:
-                        continue
+                            ultimo_envio = atendimento.data_ultimo_lembrete_retorno_enviado
+                            if ultimo_envio and (agora - ultimo_envio).days < dias_reenvio:
+                                continue
 
-                    ultimo_envio = atendimento.data_ultimo_lembrete_retorno_enviado
-                    if ultimo_envio and (agora - ultimo_envio).days < dias_reenvio:
-                        continue
+                            paciente = atendimento.paciente
+                            if not paciente.email:
+                                continue
 
-                    paciente = atendimento.paciente
-                    if not paciente.email:
-                        continue
+                            assunto = f"Hora de renovar: {servico.nome_servico}"
+                            corpo = f"""
+                            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+                                <div style="background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 1px solid #e0e0e0;">
+                                    <img src="cid:logo_clinica" alt="Logo Clínica" style="max-height: 80px;">
+                                </div>
+                                <div style="padding: 30px; background-color: #ffffff;">
+                                    <h2 style="color: #0d6efd; margin-top: 0; text-align: center;">Está na hora de retornar!</h2>
+                                    <p style="color: #555; font-size: 16px;">Olá, <strong>{paciente.nome_completo}</strong>!</p>
+                                    <p style="color: #555; font-size: 16px;">Já faz um tempo desde o seu último atendimento de <strong>{servico.nome_servico}</strong>. Que tal agendar a manutenção?</p>
 
-                    assunto = f"Hora de renovar: {servico.nome_servico}"
-                    corpo = f"""
-                    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
-                        <div style="background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 1px solid #e0e0e0;">
-                            <img src="cid:logo_clinica" alt="Logo Clínica" style="max-height: 80px;">
-                        </div>
-                        <div style="padding: 30px; background-color: #ffffff;">
-                            <h2 style="color: #0d6efd; margin-top: 0; text-align: center;">Está na hora de retornar!</h2>
-                            <p style="color: #555; font-size: 16px;">Olá, <strong>{paciente.nome_completo}</strong>!</p>
-                            <p style="color: #555; font-size: 16px;">Já faz um tempo desde o seu último atendimento de <strong>{servico.nome_servico}</strong>. Que tal agendar a manutenção?</p>
+                                    <div style="background-color: #e7f1ff; border-left: 4px solid #0d6efd; padding: 15px; margin: 20px 0;">
+                                        <p style="margin: 5px 0; color: #333;"><strong>Serviço:</strong> {servico.nome_servico}</p>
+                                        <p style="margin: 5px 0; color: #333;"><strong>Último atendimento:</strong> {atendimento.data_agendamento.strftime('%d/%m/%Y')}</p>
+                                    </div>
 
-                            <div style="background-color: #e7f1ff; border-left: 4px solid #0d6efd; padding: 15px; margin: 20px 0;">
-                                <p style="margin: 5px 0; color: #333;"><strong>Serviço:</strong> {servico.nome_servico}</p>
-                                <p style="margin: 5px 0; color: #333;"><strong>Último atendimento:</strong> {atendimento.data_agendamento.strftime('%d/%m/%Y')}</p>
+                                    <p style="color: #555; font-size: 14px; text-align: center;">Entre em contato com a clínica para agendar seu retorno.</p>
+                                </div>
+                                <div style="background-color: #f8f9fa; padding: 15px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #e0e0e0;">
+                                    <p style="margin: 0;">&copy; {datetime.now().year} {estabelecimento.nome}. Todos os direitos reservados.</p>
+                                </div>
                             </div>
-
-                            <p style="color: #555; font-size: 14px; text-align: center;">Entre em contato com a clínica para agendar seu retorno.</p>
-                        </div>
-                        <div style="background-color: #f8f9fa; padding: 15px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #e0e0e0;">
-                            <p style="margin: 0;">&copy; {datetime.now().year} Nome da Sua Clínica. Todos os direitos reservados.</p>
-                        </div>
-                    </div>
-                    """
-                    if enviar_email(paciente.email, assunto, corpo):
-                        atendimento.data_ultimo_lembrete_retorno_enviado = agora
-                        db.session.commit()
-        except Exception as e:
-            logger.error(f"Erro ao verificar lembretes de retorno: {e}")
+                            """
+                            if enviar_email(estabelecimento, paciente.email, assunto, corpo):
+                                atendimento.data_ultimo_lembrete_retorno_enviado = agora
+                                db.session.commit()
+                except Exception as e:
+                    logger.error(f"Erro ao verificar lembretes de retorno do estabelecimento {estabelecimento.id}: {e}")
 
 
 # --- COMANDOS CLI (flask <comando>) ---
-# Tabelas são criadas/atualizadas via `flask db upgrade` (Flask-Migrate) e o
-# primeiro usuário admin via a rota /setup (gated por SETUP_ENABLED). Nada
-# disso roda automaticamente ao importar o módulo, para funcionar de forma
-# previsível tanto localmente quanto sob Gunicorn no Render.
+# Tabelas são criadas/atualizadas via `flask db upgrade` (Flask-Migrate); cada
+# estabelecimento (clínica) e seu primeiro usuário admin são criados via
+# cadastro self-service em /criar-clinica. Nada disso roda automaticamente ao
+# importar o módulo, para funcionar de forma previsível tanto localmente
+# quanto sob Gunicorn no Render.
 
 @app.cli.command("seed-demo")
 def seed_demo_command():
-    """Popula profissionais, serviços e configurações de exemplo.
+    """Cria (se necessário) um estabelecimento de demonstração e popula
+    profissionais e serviços de exemplo dentro dele.
 
     Uso exclusivo de desenvolvimento local — recusa-se a rodar se
     FLASK_ENV=production, pois cria usuários com senha fraca ('123').
@@ -2550,9 +2715,16 @@ def seed_demo_command():
         # Evita UnicodeEncodeError nos prints com "✓" em consoles Windows (cp1252)
         sys.stdout.reconfigure(encoding="utf-8")
     with app.app_context():
-        criar_profissionais_padrao()
-        criar_servicos_padrao()
-        criar_configuracoes_padrao()
+        estabelecimento = Estabelecimento.query.filter_by(nome='Clínica Demo').first()
+        if not estabelecimento:
+            estabelecimento = Estabelecimento(nome='Clínica Demo', status='ativo')
+            db.session.add(estabelecimento)
+            db.session.commit()
+            print(f"✓ Estabelecimento 'Clínica Demo' criado (id={estabelecimento.id}).")
+
+        with usar_estabelecimento(estabelecimento.id):
+            criar_profissionais_padrao()
+            criar_servicos_padrao()
 
 
 @app.cli.command("lembretes-diarios")

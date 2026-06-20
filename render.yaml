@@ -20,8 +20,6 @@ services:
         value: production
       - key: FLASK_APP
         value: app_clinica.py
-      - key: SETUP_ENABLED
-        value: "0"
       - key: DATABASE_URL
         fromDatabase:
           name: prontuario-clinica-db

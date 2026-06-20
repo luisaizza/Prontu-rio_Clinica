@@ -1,0 +1,54 @@
+{% extends "base_clinica.html" %}
+
+{% block title %}Assinatura{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-md-7">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-credit-card me-2"></i>Assinatura</h5>
+                </div>
+                <div class="card-body">
+                    {% if estabelecimento.status == 'trial' %}
+                        <div class="alert alert-info">
+                            <i class="bi bi-info-circle me-2"></i>
+                            Você está no período de teste grátis.
+                            <strong>{{ estabelecimento.dias_restantes_trial() }} dia(s)</strong> restante(s).
+                        </div>
+                    {% elif estabelecimento.status == 'inadimplente' %}
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle me-2"></i>
+                            Seu período de teste expirou. O sistema está em <strong>modo somente leitura</strong>:
+                            você ainda pode consultar pacientes, prontuários e agenda, mas não pode criar,
+                            editar ou excluir registros até assinar.
+                        </div>
+                    {% elif estabelecimento.status == 'cancelado' %}
+                        <div class="alert alert-danger">
+                            <i class="bi bi-x-circle me-2"></i>
+                            Sua assinatura está cancelada. O sistema está em modo somente leitura.
+                        </div>
+                    {% else %}
+                        <div class="alert alert-success">
+                            <i class="bi bi-check-circle me-2"></i>
+                            Sua assinatura está ativa. Obrigado por usar o sistema!
+                        </div>
+                    {% endif %}
+
+                    {% if estabelecimento.status != 'ativo' %}
+                    <form method="POST" action="{{ url_for('assinatura_checkout') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-rocket-takeoff me-2"></i>Assinar agora
+                            </button>
+                        </div>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -8,6 +8,7 @@
         </div>
         <div class="card-body">
             <form method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="mb-3">
                     <label for="queixa_principal" class="form-label">Queixa Principal</label>
                     <textarea class="form-control" id="queixa_principal" name="queixa_principal" rows="3"></textarea>

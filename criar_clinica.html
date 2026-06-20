@@ -1,0 +1,56 @@
+{% extends "base_clinica.html" %}
+
+{% block title %}Criar minha Clínica{% endblock %}
+
+{% block content %}
+<div class="login-page">
+    <div class="container">
+        <div class="row justify-content-center align-items-center min-vh-100">
+            <div class="col-md-6 col-lg-5 col-xl-4">
+                <div class="login-container">
+                    <div class="text-center mb-4">
+                        <div class="logo-container mb-3">
+                            <i class="bi bi-building-fill-add text-primary" style="font-size: 3rem;"></i>
+                        </div>
+                        <h2 class="fw-bold text-primary mb-2">Crie sua Clínica</h2>
+                        <p class="text-muted">30 dias de teste grátis, sem compromisso.</p>
+                    </div>
+
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <div class="form-floating mb-3">
+                            <input type="text" class="form-control" id="nome_clinica" name="nome_clinica" placeholder="Nome da Clínica" required>
+                            <label for="nome_clinica"><i class="bi bi-building me-2"></i>Nome da Clínica</label>
+                        </div>
+
+                        <div class="form-floating mb-3">
+                            <input type="text" class="form-control" id="username" name="username" placeholder="Usuário" required>
+                            <label for="username"><i class="bi bi-person me-2"></i>Seu nome de usuário (login)</label>
+                        </div>
+
+                        <div class="form-floating mb-3">
+                            <input type="password" class="form-control" id="password" name="password" placeholder="Senha" required>
+                            <label for="password"><i class="bi bi-lock me-2"></i>Senha</label>
+                        </div>
+
+                        <div class="form-floating mb-4">
+                            <input type="password" class="form-control" id="password_confirm" name="password_confirm" placeholder="Confirmar Senha" required>
+                            <label for="password_confirm"><i class="bi bi-check2-circle me-2"></i>Confirmar Senha</label>
+                        </div>
+
+                        <div class="d-grid mb-3">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-rocket-takeoff me-2"></i>Criar minha clínica
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="text-center">
+                        <small class="text-muted">Já tem uma conta? <a href="{{ url_for('login') }}" class="text-decoration-none">Fazer Login</a></small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -17,7 +17,7 @@
         </div>
         <div class="card-body">
             <form method="POST" action="{{ url_for('editar_exame_fisico', paciente_id=paciente.id, exame_id=exame.id) }}">
-                
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                 <div class="row g-3">
                     <!-- Sinais Vitais -->
                     <div class="col-12">

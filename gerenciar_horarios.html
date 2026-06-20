@@ -22,7 +22,7 @@
                 </div>
                 <div class="card-body">
                     <form method="POST" action="{{ url_for('gerenciar_horarios_profissional', profissional_id=profissional.id) }}">
-                        {{ csrf_token()|safe }}
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         <input type="hidden" name="acao" value="adicionar">
 
                         <div class="mb-3">

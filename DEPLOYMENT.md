@@ -15,12 +15,18 @@ O repositório já inclui um `render.yaml` (Blueprint) que descreve toda a infra
 3. `SECRET_KEY` é gerada automaticamente pelo Render (`generateValue: true`) — não precisa configurar manualmente.
 4. `DATABASE_URL` é injetada automaticamente a partir do Postgres criado — não precisa configurar manualmente.
 5. Após o primeiro deploy, o `preDeployCommand: flask db upgrade` já cria todas as tabelas no Postgres.
-6. **Crie o primeiro usuário administrador**: defina temporariamente as variáveis de ambiente `SETUP_ENABLED=1`, `SETUP_USERNAME` e `SETUP_PASSWORD` no serviço web, faça deploy, acesse `https://seu-servico.onrender.com/setup` uma única vez, e depois **volte `SETUP_ENABLED` para `0`** e refaça o deploy. Essa rota só cria o usuário se nenhum outro existir ainda no banco.
-7. As fotos de pacientes são salvas em `UPLOAD_FOLDER=/var/data/uploads_clinica` (configurado no `render.yaml`), dentro do disco persistente — sobrevivem a deploys e restarts.
+6. **Não há mais bootstrap manual de admin**: o sistema é multi-tenant self-service. Cada clínica se cadastra sozinha em `https://seu-servico.onrender.com/criar-clinica`, o que cria o `Estabelecimento` (com 30 dias de trial) e o primeiro usuário administrador daquela clínica. Não existe mais a rota `/setup` nem as variáveis `SETUP_ENABLED`/`SETUP_USERNAME`/`SETUP_PASSWORD`.
+7. As fotos de pacientes e os logos de clínica são salvos em `UPLOAD_FOLDER=/var/data/uploads_clinica` (configurado no `render.yaml`), dentro do disco persistente — sobrevivem a deploys e restarts.
 
 ### Atualizações futuras
 - Ao alterar modelos do banco, gere uma nova migration localmente (`flask db migrate -m "descrição"`) e faça commit da pasta `migrations/`. O próprio `preDeployCommand` aplica (`flask db upgrade`) no próximo deploy.
-- Dados de demonstração (profissionais/serviços de exemplo) **não** são criados automaticamente em produção; use `flask seed-demo` apenas localmente, em ambiente de desenvolvimento.
+- Dados de demonstração (profissionais/serviços de exemplo) **não** são criados automaticamente em produção; use `flask seed-demo` apenas localmente, em ambiente de desenvolvimento (ele cria/usa um estabelecimento "Clínica Demo" isolado).
+
+### Multi-tenant (estabelecimentos) e assinatura
+- Cada clínica é um `Estabelecimento` isolado: pacientes, prontuários, serviços, profissionais, agenda e tema (logo/cores/e-mail) pertencem a um único estabelecimento e nunca aparecem para outro.
+- Ao expirar o trial de 30 dias sem assinatura, o estabelecimento muda automaticamente para `inadimplente` e entra em **modo somente leitura**: continua possível visualizar pacientes/agenda/prontuário, mas criar, editar ou excluir fica bloqueado até assinar.
+- A tela `/assinatura` e a rota `/assinatura/checkout` já existem, mas **não há gateway de pagamento integrado ainda** (Stripe/Mercado Pago a definir) — o checkout hoje só exibe "integração em breve". Esse é o ponto de extensão para plugar o gateway escolhido no futuro.
+- Os comandos de cron (`flask lembretes-diarios`, `flask lembretes-retorno`) já iteram por todos os estabelecimentos ativos/em trial automaticamente.
 
 ---
 

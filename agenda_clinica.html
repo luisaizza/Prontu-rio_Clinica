@@ -153,6 +153,7 @@
                         <div class="btn-group btn-group-sm" role="group">
                             {% if agendamento.status == 'agendado' %}
                             <form method="POST" action="{{ url_for('confirmar_agendamento', agendamento_id=agendamento.id) }}" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                 <button type="submit" class="btn btn-success btn-sm" title="Confirmar">
                                     <i class="bi bi-check-circle"></i>
                                 </button>
@@ -161,6 +162,7 @@
 
                             {% if agendamento.status == 'confirmado' and agendamento.tempo_restante() > 0 %}
                             <form method="POST" action="{{ url_for('iniciar_atendimento', agendamento_id=agendamento.id) }}" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                 <button type="submit" class="btn btn-warning btn-sm" title="Iniciar Atendimento">
                                     <i class="bi bi-play-circle"></i>
                                 </button>
@@ -169,6 +171,7 @@
 
                             {% if agendamento.status == 'em_andamento' %}
                             <form method="POST" action="{{ url_for('finalizar_atendimento', agendamento_id=agendamento.id) }}" style="display:inline;">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                 <button type="submit" class="btn btn-success btn-sm" title="Finalizar">
                                     <i class="bi bi-check2-circle"></i>
                                 </button>
@@ -209,6 +212,7 @@
                             <div class="modal-footer">
                                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Voltar</button>
                                 <form method="POST" action="{{ url_for('cancelar_agendamento', agendamento_id=agendamento.id) }}" style="display:inline;">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                     <button type="submit" class="btn btn-danger">Cancelar Agendamento</button>
                                 </form>
                             </div>

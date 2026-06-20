@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(FLASK_APP=app_clinica.py py -m flask db stamp 75c7eca808f5)",
+      "Bash(FLASK_APP=app_clinica.py py -m flask db upgrade)",
+      "Bash(py _verificacao_multitenant.py)",
+      "Bash(rm -f instance/_verif_cli.db)",
+      "Bash(FLASK_APP=app_clinica.py DATABASE_URL=\"sqlite:///_verif_cli.db\" py -m flask db upgrade)"
+    ]
+  }
+}

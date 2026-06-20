@@ -69,6 +69,7 @@
                         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                     </div>
                     <form method="POST" action="{{ url_for('editar_servico', servico_id=servico.id) }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                         <div class="modal-body">
                             <div class="mb-3">
                                 <label for="nome_servico_{{ servico.id }}" class="form-label">Nome do Serviço</label>
@@ -120,6 +121,7 @@
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
                         <form method="POST" action="{{ url_for('deletar_servico', servico_id=servico.id) }}" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                             <button type="submit" class="btn btn-danger">Sim, Deletar</button>
                         </form>
                     </div>

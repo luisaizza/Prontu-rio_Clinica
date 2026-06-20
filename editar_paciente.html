@@ -10,7 +10,7 @@
             </div>
             <div class="card-body">
                 <form method="POST">
-                    {{ csrf_token() }}
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                     <div class="mb-3">
                         <label for="nome_completo" class="form-label">Nome Completo</label>
                         <input type="text" class="form-control" id="nome_completo" name="nome_completo" value="{{ paciente.nome_completo }}" required>

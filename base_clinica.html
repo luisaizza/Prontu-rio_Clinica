@@ -14,11 +14,15 @@
 </head>
 <body class="{% block body_class %}{% endblock %}">
 
-    <nav class="navbar navbar-expand-lg shadow-sm {{ config.get('cor_cabecalho', 'bg-light navbar-light') }}">
+    <nav class="navbar navbar-expand-lg shadow-sm {{ estabelecimento_atual.cor_cabecalho if estabelecimento_atual else 'bg-light navbar-light' }}">
         <div class="container-fluid">
             <a class="navbar-brand" href="{{ url_for('home') }}">
+                {% if estabelecimento_atual and estabelecimento_atual.logo_filename %}
+                <img src="{{ url_for('uploaded_logo', filename=estabelecimento_atual.logo_filename) }}" alt="Logo" width="30" height="30" class="d-inline-block align-top">
+                {% else %}
                 <img src="{{ url_for('static', filename='logo.png') }}" alt="Logo" width="30" height="30" class="d-inline-block align-top">
-                Clínica Estética
+                {% endif %}
+                {{ estabelecimento_atual.nome if estabelecimento_atual else 'Clínica Estética' }}
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
                 <span class="navbar-toggler-icon"></span>
@@ -56,6 +60,7 @@
                             </a>
                             <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdown">
                                 <li><a class="dropdown-item" href="{{ url_for('perfil') }}">Meu Perfil</a></li>
+                                <li><a class="dropdown-item" href="{{ url_for('assinatura') }}">Assinatura</a></li>
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{{ url_for('logout') }}">Sair do Sistema</a></li>
                             </ul>
@@ -71,6 +76,19 @@
     </nav>
 
     <main class="container mt-4">
+        {% if estabelecimento_atual and estabelecimento_atual.status == 'trial' and estabelecimento_atual.dias_restantes_trial() <= 5 %}
+        <div class="alert alert-warning">
+            <i class="bi bi-clock-history me-2"></i>
+            Seu teste grátis termina em <strong>{{ estabelecimento_atual.dias_restantes_trial() }} dia(s)</strong>.
+            <a href="{{ url_for('assinatura') }}">Assine agora</a> para não perder o acesso.
+        </div>
+        {% elif estabelecimento_atual and estabelecimento_atual.em_periodo_de_leitura_apenas() %}
+        <div class="alert alert-danger">
+            <i class="bi bi-lock-fill me-2"></i>
+            Sua assinatura expirou — o sistema está em modo somente leitura.
+            <a href="{{ url_for('assinatura') }}">Assine agora</a> para voltar a criar e editar registros.
+        </div>
+        {% endif %}
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
                 {% for category, message in messages %}
@@ -85,7 +103,7 @@
     </main>
 
     <footer class="footer">
-        <p class="mb-0">&copy; {{ current_year }} Clínica Estética. Todos os direitos reservados.</p>
+        <p class="mb-0">&copy; {{ current_year }} {{ estabelecimento_atual.nome if estabelecimento_atual else 'Clínica Estética' }}. Todos os direitos reservados.</p>
     </footer>
 
     <!-- CORREÇÃO: Adicionado o JavaScript do Bootstrap -->

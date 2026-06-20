@@ -41,6 +41,7 @@
                                 <i class="bi bi-pencil-square"></i> Editar
                             </a>
                             <form action="{{ url_for('deletar_profissional', profissional_id=profissional.id) }}" method="POST" class="d-inline" onsubmit="return confirm('Tem certeza que deseja excluir o perfil profissional de {{ profissional.usuario.username }}? Esta ação não pode ser desfeita.');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                                 <button type="submit" class="btn btn-sm btn-danger" title="Excluir Profissional">
                                     <i class="bi bi-trash-fill"></i> Excluir
                                 </button>

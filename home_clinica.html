@@ -23,7 +23,7 @@
                             <p class="mb-0 text-muted">Com Agendamentos</p>
                         </div>
                         <div class="col-md-3 mb-3">
-                            <h3 class="{{ config.get('cor_novos_pacientes', 'text-success') }}">{{ pacientes|selectattr('data_cadastro', 'greaterthan', (now - timedelta(days=30)))|list|length }}</h3>
+                            <h3 class="{{ estabelecimento_atual.cor_novos_pacientes if estabelecimento_atual else 'text-success' }}">{{ pacientes|selectattr('data_cadastro', 'greaterthan', (now - timedelta(days=30)))|list|length }}</h3>
                             <p class="mb-0 text-muted">Novos (30 dias)</p>
                         </div>
                     </div>

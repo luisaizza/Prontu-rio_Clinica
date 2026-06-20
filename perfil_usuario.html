@@ -20,7 +20,7 @@
                 <p class="text-muted">Para sua segurança, digite sua senha atual antes de definir uma nova.</p>
 
                 <form method="POST" action="{{ url_for('perfil') }}">
-                    {{ csrf_token() }}
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
                     <div class="mb-3">
                         <label for="senha_atual" class="form-label">Senha Atual</label>
                         <input type="password" class="form-control" id="senha_atual" name="senha_atual" required>

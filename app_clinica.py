@@ -12,7 +12,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 from functools import wraps
-from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory, jsonify, session
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -100,6 +100,17 @@ def requer_permissao(permissao):
         return decorated_function
     return decorator
 
+def requer_super_admin(f):
+    """Decorador para rotas exclusivas do admin da plataforma (vê/opera em qualquer clínica)."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not current_user.is_authenticated:
+            return redirect(url_for('login'))
+        if not current_user.eh_super_admin:
+            abort(403)
+        return f(*args, **kwargs)
+    return decorated_function
+
 def requer_perfil(perfil):
     """Decorador para verificar o perfil específico do usuário"""
     def decorator(f):
@@ -119,7 +130,13 @@ def requer_perfil(perfil):
 @app.context_processor
 def inject_utilities():
     """Injeta utilitários em todos os templates."""
-    estabelecimento_atual = current_user.estabelecimento if current_user.is_authenticated else None
+    estabelecimento_atual = None
+    if current_user.is_authenticated:
+        if current_user.eh_super_admin:
+            entrou_id = session.get('super_admin_estabelecimento_id')
+            estabelecimento_atual = db.session.get(Estabelecimento, entrou_id) if entrou_id else None
+        else:
+            estabelecimento_atual = current_user.estabelecimento
     return {
         'current_year': datetime.now().year,
         'now': datetime.now(),
@@ -322,12 +339,17 @@ class User(TenantMixin, UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(256), nullable=False)
     perfil = db.Column(db.String(20), default='esteta', nullable=False)  # 'admin', 'secretaria', 'esteta'
+    # Admin da plataforma (não de uma clínica específica): vê e opera em
+    # qualquer Estabelecimento, "entrando" nele via /admin-plataforma. O
+    # estabelecimento_id dele aponta para um Estabelecimento "âncora" só para
+    # satisfazer a FK do TenantMixin — não é usado para isolar dados dele.
+    eh_super_admin = db.Column(db.Boolean, default=False, nullable=False, server_default=db.false())
     estabelecimento = db.relationship('Estabelecimento', backref='usuarios')
 
     def tem_permissao(self, permissao):
         """Verifica se o usuário tem uma permissão específica"""
-        # Admin tem todas as permissões
-        if self.perfil == 'admin':
+        # Super admin e admin têm todas as permissões
+        if self.eh_super_admin or self.perfil == 'admin':
             return True
             
         permissoes = {
@@ -551,6 +573,12 @@ def load_user(user_id):
 # somente-leitura (trial vencido/inadimplente/cancelado).
 ENDPOINTS_ISENTOS_DO_GATE_DE_ASSINATURA = {'assinatura', 'assinatura_checkout', 'logout', 'static'}
 
+# Rotas que o admin da plataforma pode acessar mesmo sem ter "entrado" em
+# nenhuma clínica ainda (antes de escolher uma no painel).
+ENDPOINTS_PERMITIDOS_SUPER_ADMIN_SEM_CLINICA = {
+    'admin_plataforma', 'admin_plataforma_entrar', 'logout', 'static', 'perfil',
+}
+
 
 @app.before_request
 def _gerenciar_contexto_multi_tenant():
@@ -568,6 +596,19 @@ def _gerenciar_contexto_multi_tenant():
     current_estabelecimento_id.set(None)
 
     if not current_user.is_authenticated:
+        return
+
+    if current_user.eh_super_admin:
+        # Admin da plataforma: o estabelecimento "ativo" é o que ele escolheu
+        # no painel /admin-plataforma (guardado na sessão), não o estabelecimento
+        # "âncora" do próprio usuário. Sem clínica escolhida, só pode acessar o
+        # próprio painel. Nunca passa pelo gate de assinatura — não é cliente
+        # pagante, é da equipe da plataforma.
+        estabelecimento_entrado_id = session.get('super_admin_estabelecimento_id')
+        if estabelecimento_entrado_id:
+            current_estabelecimento_id.set(estabelecimento_entrado_id)
+        elif request.endpoint not in ENDPOINTS_PERMITIDOS_SUPER_ADMIN_SEM_CLINICA:
+            return redirect(url_for('admin_plataforma'))
         return
 
     estabelecimento = current_user.estabelecimento
@@ -995,6 +1036,46 @@ def assinatura_checkout():
     """
     flash("A integração de pagamento ainda será configurada em breve. Entre em contato com o suporte para assinar.", "info")
     return redirect(url_for('assinatura'))
+
+# --- PAINEL DO ADMIN DA PLATAFORMA (super admin) ---
+
+@app.route("/admin-plataforma")
+@requer_super_admin
+def admin_plataforma():
+    """Lista todas as clínicas cadastradas, para o admin da plataforma escolher uma e entrar."""
+    estabelecimentos = Estabelecimento.query.order_by(Estabelecimento.data_criacao.desc()).all()
+    contagens = {}
+    with usar_estabelecimento(None):
+        for estabelecimento in estabelecimentos:
+            contagens[estabelecimento.id] = {
+                'usuarios': User.query.filter_by(estabelecimento_id=estabelecimento.id).count(),
+                'pacientes': Paciente.query.filter_by(estabelecimento_id=estabelecimento.id).count(),
+            }
+    estabelecimento_atual_id = session.get('super_admin_estabelecimento_id')
+    return render_template(
+        "admin_plataforma.html",
+        estabelecimentos=estabelecimentos,
+        contagens=contagens,
+        estabelecimento_atual_id=estabelecimento_atual_id,
+    )
+
+@app.route("/admin-plataforma/entrar/<int:estabelecimento_id>", methods=["POST"])
+@requer_super_admin
+def admin_plataforma_entrar(estabelecimento_id):
+    """Admin da plataforma passa a operar dentro da clínica escolhida."""
+    estabelecimento = db.session.get(Estabelecimento, estabelecimento_id)
+    if not estabelecimento:
+        abort(404)
+    session['super_admin_estabelecimento_id'] = estabelecimento.id
+    flash(f"Você entrou na clínica '{estabelecimento.nome}'.", "success")
+    return redirect(url_for('home'))
+
+@app.route("/admin-plataforma/sair", methods=["POST"])
+@requer_super_admin
+def admin_plataforma_sair():
+    """Sai da clínica atual e volta para a lista de clínicas."""
+    session.pop('super_admin_estabelecimento_id', None)
+    return redirect(url_for('admin_plataforma'))
 
 @app.route("/perfil", methods=["GET", "POST"])
 @login_required
@@ -2699,6 +2780,51 @@ def verificar_lembretes_retorno():
 # cadastro self-service em /criar-clinica. Nada disso roda automaticamente ao
 # importar o módulo, para funcionar de forma previsível tanto localmente
 # quanto sob Gunicorn no Render.
+
+@app.cli.command("seed-super-admin")
+def seed_super_admin_command():
+    """Garante que existe um usuário super-admin fixo da plataforma (vê e opera
+    em qualquer clínica via /admin-plataforma).
+
+    Idempotente de propósito: roda em todo deploy (ver render.yaml) e nunca
+    duplica nem perde o usuário — só cria na primeira vez e depois mantém
+    senha/flag sincronizados com as env vars.
+
+    Credenciais via SUPER_ADMIN_USERNAME/SUPER_ADMIN_PASSWORD; o default
+    abaixo só existe para não travar o primeiro deploy — troque a senha
+    pelo próprio sistema (/perfil) depois do primeiro login.
+    """
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
+    username = os.environ.get("SUPER_ADMIN_USERNAME", "admin")
+    password = os.environ.get("SUPER_ADMIN_PASSWORD", "Esqueci001")
+    with app.app_context():
+        with usar_estabelecimento(None):
+            estabelecimento_plataforma = Estabelecimento.query.filter_by(nome='Administração da Plataforma').first()
+            if not estabelecimento_plataforma:
+                estabelecimento_plataforma = Estabelecimento(nome='Administração da Plataforma', status='ativo')
+                db.session.add(estabelecimento_plataforma)
+                db.session.commit()
+
+            usuario = User.query.filter_by(username=username).first()
+            if usuario:
+                usuario.password_hash = generate_password_hash(password)
+                usuario.eh_super_admin = True
+                usuario.perfil = 'admin'
+                db.session.commit()
+                print(f"✓ Super admin '{username}' já existia — senha/flag atualizados.")
+            else:
+                usuario = User(
+                    username=username,
+                    password_hash=generate_password_hash(password),
+                    perfil='admin',
+                    eh_super_admin=True,
+                    estabelecimento_id=estabelecimento_plataforma.id,
+                )
+                db.session.add(usuario)
+                db.session.commit()
+                print(f"✓ Super admin '{username}' criado.")
+
 
 @app.cli.command("seed-demo")
 def seed_demo_command():

@@ -7,7 +7,7 @@ services:
     name: prontuario-clinica
     runtime: python
     plan: free
-    buildCommand: "pip install -r requirements.txt && flask db upgrade"
+    buildCommand: "pip install -r requirements.txt && flask db upgrade && flask seed-super-admin"
     startCommand: "gunicorn --workers 1 wsgi:app"
     healthCheckPath: /healthz
     envVars:
@@ -23,3 +23,7 @@ services:
         fromDatabase:
           name: prontuario-clinica-db
           property: connectionString
+      - key: SUPER_ADMIN_USERNAME
+        value: admin
+      - key: SUPER_ADMIN_PASSWORD
+        value: Esqueci001

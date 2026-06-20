@@ -60,7 +60,11 @@
                             </a>
                             <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdown">
                                 <li><a class="dropdown-item" href="{{ url_for('perfil') }}">Meu Perfil</a></li>
+                                {% if current_user.eh_super_admin %}
+                                <li><a class="dropdown-item" href="{{ url_for('admin_plataforma') }}"><i class="bi bi-buildings me-1"></i>Painel da Plataforma</a></li>
+                                {% else %}
                                 <li><a class="dropdown-item" href="{{ url_for('assinatura') }}">Assinatura</a></li>
+                                {% endif %}
                                 <li><hr class="dropdown-divider"></li>
                                 <li><a class="dropdown-item" href="{{ url_for('logout') }}">Sair do Sistema</a></li>
                             </ul>
@@ -76,6 +80,15 @@
     </nav>
 
     <main class="container mt-4">
+        {% if current_user.is_authenticated and current_user.eh_super_admin and estabelecimento_atual %}
+        <div class="alert alert-primary d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-shield-lock-fill me-2"></i>Modo admin da plataforma — você está dentro de <strong>{{ estabelecimento_atual.nome }}</strong>.</span>
+            <form method="POST" action="{{ url_for('admin_plataforma_sair') }}" class="d-inline mb-0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                <button type="submit" class="btn btn-sm btn-outline-primary">Trocar de clínica</button>
+            </form>
+        </div>
+        {% endif %}
         {% if estabelecimento_atual and estabelecimento_atual.status == 'trial' and estabelecimento_atual.dias_restantes_trial() <= 5 %}
         <div class="alert alert-warning">
             <i class="bi bi-clock-history me-2"></i>

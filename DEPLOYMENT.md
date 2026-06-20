@@ -13,7 +13,8 @@ O repositório inclui um `render.yaml` (Blueprint). **A versão atual está conf
 3. `SECRET_KEY` é gerada automaticamente pelo Render (`generateValue: true`) — não precisa configurar manualmente.
 4. `DATABASE_URL` é injetada automaticamente a partir do Postgres criado — não precisa configurar manualmente.
 5. O `buildCommand` já inclui `flask db upgrade` no final (o plano free não suporta `preDeployCommand`), então as tabelas são criadas/atualizadas no Postgres a cada build.
-6. **Não há mais bootstrap manual de admin**: o sistema é multi-tenant self-service. Cada clínica se cadastra sozinha em `https://seu-servico.onrender.com/criar-clinica`, o que cria o `Estabelecimento` (com 30 dias de trial) e o primeiro usuário administrador daquela clínica. Não existe mais a rota `/setup` nem as variáveis `SETUP_ENABLED`/`SETUP_USERNAME`/`SETUP_PASSWORD`.
+6. **Não há mais bootstrap manual de admin de clínica**: o sistema é multi-tenant self-service. Cada clínica se cadastra sozinha em `https://seu-servico.onrender.com/criar-clinica`, o que cria o `Estabelecimento` (com 30 dias de trial) e o primeiro usuário administrador daquela clínica. Não existe mais a rota `/setup` nem as variáveis `SETUP_ENABLED`/`SETUP_USERNAME`/`SETUP_PASSWORD`.
+7. **Admin da plataforma (super admin) fixo**: o `buildCommand` também roda `flask seed-super-admin`, que cria (ou atualiza, se já existir) um usuário com acesso a *todas* as clínicas via `/admin-plataforma`. Credenciais vêm de `SUPER_ADMIN_USERNAME`/`SUPER_ADMIN_PASSWORD` no `render.yaml` (hoje fixas em `admin`/`Esqueci001`) — troque esses valores no painel do Render quando quiser mudar a senha; o próximo deploy já atualiza o usuário existente (não precisa recriar nada). Recomendo trocar a senha pelo próprio sistema (`/perfil`, depois de logar) assim que possível, já que a senha padrão fica também neste repositório.
 
 ### ⚠️ Limitações do plano free (aceitas por ora, para testar sem custo)
 - **Uploads não persistem**: o plano free do Render não permite disco persistente. Fotos de pacientes e logo da clínica são salvos num diretório local efêmero (`uploads_clinica/`, dentro do próprio serviço) e **somem a cada novo deploy ou restart**. Para resolver de vez, é preciso voltar para um plano pago com `disk:` no `render.yaml` (como na versão anterior deste arquivo) ou migrar os uploads para um storage externo (S3-compatível).
@@ -30,6 +31,7 @@ O repositório inclui um `render.yaml` (Blueprint). **A versão atual está conf
 - Ao expirar o trial de 30 dias sem assinatura, o estabelecimento muda automaticamente para `inadimplente` e entra em **modo somente leitura**: continua possível visualizar pacientes/agenda/prontuário, mas criar, editar ou excluir fica bloqueado até assinar.
 - A tela `/assinatura` e a rota `/assinatura/checkout` já existem, mas **não há gateway de pagamento integrado ainda** (Stripe/Mercado Pago a definir) — o checkout hoje só exibe "integração em breve". Esse é o ponto de extensão para plugar o gateway escolhido no futuro.
 - Os comandos de cron (`flask lembretes-diarios`, `flask lembretes-retorno`) já iteram por todos os estabelecimentos ativos/em trial automaticamente.
+- O usuário com `eh_super_admin=True` (ver acima) não pertence a uma clínica específica: ele loga, escolhe uma clínica em `/admin-plataforma` e passa a operar dentro dela com acesso total (criar/editar/excluir), até clicar em "Trocar de clínica". Esse usuário nunca é bloqueado pelo gate de trial/assinatura.
 
 ---
 

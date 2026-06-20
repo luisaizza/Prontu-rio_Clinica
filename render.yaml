@@ -39,6 +39,8 @@ services:
     buildCommand: "pip install -r requirements.txt"
     startCommand: "flask lembretes-diarios && flask lembretes-retorno"
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
       - key: FLASK_APP
         value: app_clinica.py
       - key: FLASK_ENV

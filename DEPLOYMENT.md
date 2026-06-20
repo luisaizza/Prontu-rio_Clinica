@@ -12,7 +12,7 @@ O repositório inclui um `render.yaml` (Blueprint). **A versão atual está conf
    - `prontuario-clinica-db` (Postgres gerenciado, plano free)
 3. `SECRET_KEY` é gerada automaticamente pelo Render (`generateValue: true`) — não precisa configurar manualmente.
 4. `DATABASE_URL` é injetada automaticamente a partir do Postgres criado — não precisa configurar manualmente.
-5. Após o primeiro deploy, o `preDeployCommand: flask db upgrade` já cria todas as tabelas no Postgres.
+5. O `buildCommand` já inclui `flask db upgrade` no final (o plano free não suporta `preDeployCommand`), então as tabelas são criadas/atualizadas no Postgres a cada build.
 6. **Não há mais bootstrap manual de admin**: o sistema é multi-tenant self-service. Cada clínica se cadastra sozinha em `https://seu-servico.onrender.com/criar-clinica`, o que cria o `Estabelecimento` (com 30 dias de trial) e o primeiro usuário administrador daquela clínica. Não existe mais a rota `/setup` nem as variáveis `SETUP_ENABLED`/`SETUP_USERNAME`/`SETUP_PASSWORD`.
 
 ### ⚠️ Limitações do plano free (aceitas por ora, para testar sem custo)
@@ -22,7 +22,7 @@ O repositório inclui um `render.yaml` (Blueprint). **A versão atual está conf
 - Quando for para produção paga, restaure o `disk:` no serviço web, o `UPLOAD_FOLDER=/var/data/uploads_clinica`, o serviço de `type: cron`, e troque `plan: free` por `plan: starter` (ou outro pago) no banco e no web service.
 
 ### Atualizações futuras
-- Ao alterar modelos do banco, gere uma nova migration localmente (`flask db migrate -m "descrição"`) e faça commit da pasta `migrations/`. O próprio `preDeployCommand` aplica (`flask db upgrade`) no próximo deploy.
+- Ao alterar modelos do banco, gere uma nova migration localmente (`flask db migrate -m "descrição"`) e faça commit da pasta `migrations/`. O próprio `buildCommand` aplica (`flask db upgrade`) no próximo deploy.
 - Dados de demonstração (profissionais/serviços de exemplo) **não** são criados automaticamente em produção; use `flask seed-demo` apenas localmente, em ambiente de desenvolvimento (ele cria/usa um estabelecimento "Clínica Demo" isolado).
 
 ### Multi-tenant (estabelecimentos) e assinatura

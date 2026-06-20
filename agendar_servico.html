@@ -64,6 +64,7 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
     const profissionalSelect = document.getElementById('profissional_id');
+    const servicoSelect = document.getElementById('servico_id');
     const dataInput = document.getElementById('data_agendamento');
     const horaSelect = document.getElementById('hora_agendamento');
     const btnAgendar = document.getElementById('btn-agendar');
@@ -111,7 +112,8 @@ document.addEventListener('DOMContentLoaded', function() {
         horaSelect.innerHTML = '<option value="">Carregando...</option>';
 
         try {
-            const response = await fetch(`/agenda/horarios-disponiveis/${profissionalId}?data=${dataSelecionada}`);
+            const servicoId = servicoSelect.value;
+            const response = await fetch(`/agenda/horarios-disponiveis/${profissionalId}?data=${dataSelecionada}&servico_id=${servicoId}`);
             const data = await response.json();
 
             horaSelect.innerHTML = '';
@@ -133,6 +135,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     profissionalSelect.addEventListener('change', buscarDiasDisponiveis);
     dataInput.addEventListener('change', validarDiaSemana);
+    servicoSelect.addEventListener('change', function() {
+        if (dataInput.value) buscarHorarios();
+    });
     
     // Inicia a busca de dias ao carregar a página
     if (profissionalSelect.value) {

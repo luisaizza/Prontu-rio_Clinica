@@ -51,7 +51,9 @@
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="5" class="text-center">Nenhum profissional encontrado.</td>
+                    <td colspan="5" class="text-center text-muted">
+                        Nenhum profissional cadastrado ainda. <a href="{{ url_for('novo_profissional') }}">Cadastrar o primeiro</a> — depois configure os horários dele para liberar o agendamento online.
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>

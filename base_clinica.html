@@ -89,13 +89,13 @@
             </form>
         </div>
         {% endif %}
-        {% if estabelecimento_atual and estabelecimento_atual.status == 'trial' and estabelecimento_atual.dias_restantes_trial() <= 5 %}
+        {% if current_user.is_authenticated and estabelecimento_atual and estabelecimento_atual.status == 'trial' and estabelecimento_atual.dias_restantes_trial() <= 5 %}
         <div class="alert alert-warning">
             <i class="bi bi-clock-history me-2"></i>
             Seu teste grátis termina em <strong>{{ estabelecimento_atual.dias_restantes_trial() }} dia(s)</strong>.
             <a href="{{ url_for('assinatura') }}">Assine agora</a> para não perder o acesso.
         </div>
-        {% elif estabelecimento_atual and estabelecimento_atual.em_periodo_de_leitura_apenas() %}
+        {% elif current_user.is_authenticated and estabelecimento_atual and estabelecimento_atual.em_periodo_de_leitura_apenas() %}
         <div class="alert alert-danger">
             <i class="bi bi-lock-fill me-2"></i>
             Sua assinatura expirou — o sistema está em modo somente leitura.

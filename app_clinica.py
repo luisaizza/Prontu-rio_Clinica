@@ -306,6 +306,9 @@ class Estabelecimento(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(150), nullable=False)
     logo_filename = db.Column(db.String(200), nullable=True)
+    # Identificador público usado no link de agendamento (/agendar/<slug>),
+    # para não expor o id numérico interno nem o estabelecimento de outra clínica.
+    slug = db.Column(db.String(160), unique=True, nullable=True)
 
     # Tema/marca (antes em Configuracao, agora por estabelecimento)
     cor_novos_pacientes = db.Column(db.String(50), default='text-success')
@@ -331,6 +334,21 @@ class Estabelecimento(db.Model):
             return 0
         restante = (self.trial_termina_em - datetime.now()).days
         return max(restante, 0)
+
+
+def gerar_slug_unico(nome):
+    """Gera um slug (ex: 'clinica-bela-pele') a partir do nome da clínica,
+    garantindo unicidade global (o slug identifica a clínica no link público
+    de agendamento, então não pode colidir entre estabelecimentos diferentes)."""
+    import unicodedata
+    sem_acento = unicodedata.normalize('NFKD', nome.strip().lower()).encode('ascii', 'ignore').decode('ascii')
+    base = re.sub(r'[^a-z0-9]+', '-', sem_acento).strip('-') or 'clinica'
+    slug = base
+    contador = 2
+    while Estabelecimento.query.filter_by(slug=slug).first():
+        slug = f"{base}-{contador}"
+        contador += 1
+    return slug
 
 
 class User(TenantMixin, UserMixin, db.Model):
@@ -997,6 +1015,7 @@ def criar_clinica():
 
         novo_estabelecimento = Estabelecimento(
             nome=nome_clinica,
+            slug=gerar_slug_unico(nome_clinica),
             status='trial',
             trial_termina_em=datetime.now() + timedelta(days=30),
         )
@@ -1017,6 +1036,153 @@ def criar_clinica():
         return redirect(url_for("home"))
 
     return render_template("criar_clinica.html")
+
+# --- AGENDAMENTO PÚBLICO (paciente agenda sozinho, sem login) ---
+#
+# Fluxo: paciente acessa /agendar/<slug-da-clinica> (link que o admin
+# compartilha), escolhe o serviço, depois profissional + dia/horário
+# disponíveis (mesma lógica de disponibilidade usada internamente), e por
+# fim seus próprios dados. O agendamento nasce com status='agendado' — o
+# mesmo estado "pendente" que qualquer agendamento já nasce hoje — então o
+# profissional/equipe precisa confirmar pela agenda normal antes de valer.
+# Como não há usuário logado, o contexto do tenant é setado manualmente com
+# `usar_estabelecimento(...)` em vez de vir do before_request.
+
+def _resolver_estabelecimento_publico(slug):
+    estabelecimento = Estabelecimento.query.filter_by(slug=slug).first()
+    if not estabelecimento:
+        abort(404)
+    return estabelecimento
+
+@app.route("/agendar/<slug>")
+def agendar_publico_inicio(slug):
+    """Primeira etapa: escolher o serviço desejado."""
+    estabelecimento = _resolver_estabelecimento_publico(slug)
+    with usar_estabelecimento(estabelecimento.id):
+        servicos = ServicoEstetico.query.filter_by(ativo=True).order_by(ServicoEstetico.nome_servico).all()
+    return render_template("agendar_publico_servico.html", estabelecimento=estabelecimento,
+                           estabelecimento_atual=estabelecimento, servicos=servicos)
+
+@app.route("/agendar/<slug>/horario", methods=["GET", "POST"])
+def agendar_publico_horario(slug):
+    """Segunda etapa: escolher profissional, dia/horário e informar os próprios dados."""
+    estabelecimento = _resolver_estabelecimento_publico(slug)
+    servico_id = request.args.get("servico_id", type=int) or request.form.get("servico_id", type=int)
+
+    with usar_estabelecimento(estabelecimento.id):
+        servico = db.session.get(ServicoEstetico, servico_id) if servico_id else None
+        if not servico or not servico.ativo:
+            flash("Selecione um serviço válido para continuar.", "warning")
+            return redirect(url_for("agendar_publico_inicio", slug=slug))
+
+        profissionais = ProfissionalEstetico.query.join(User).all()
+
+        if estabelecimento.em_periodo_de_leitura_apenas():
+            flash("Esta clínica está temporariamente indisponível para novos agendamentos. Entre em contato diretamente com ela.", "warning")
+            return redirect(url_for("agendar_publico_inicio", slug=slug))
+
+        if request.method == "POST":
+            profissional_id = request.form.get("profissional_id", type=int)
+            data_str = request.form.get("data_agendamento")
+            hora_str = request.form.get("hora_agendamento")
+            nome_completo = (request.form.get("nome_completo") or "").strip()
+            cpf = (request.form.get("cpf") or "").strip()
+            telefone = (request.form.get("telefone") or "").strip()
+            email = (request.form.get("email") or "").strip()
+
+            erro = None
+            if not all([profissional_id, data_str, hora_str, nome_completo, cpf, telefone]):
+                erro = "Preencha todos os campos obrigatórios."
+            elif not is_cpf_valid(cpf):
+                erro = "CPF inválido. Verifique o número digitado."
+
+            data_hora = None
+            if not erro:
+                try:
+                    data_hora = datetime.strptime(f"{data_str} {hora_str}", "%Y-%m-%d %H:%M")
+                    if data_hora < datetime.now():
+                        erro = "Não é possível agendar para uma data/hora no passado."
+                except ValueError:
+                    erro = "Data ou horário inválido."
+
+            if not erro:
+                # Revalida disponibilidade no servidor (o horário pode ter sido
+                # ocupado por outra pessoa entre a página carregar e o envio).
+                horarios_validos = calcular_horarios_disponiveis(profissional_id, data_hora.date(), servico.duracao_minutos)
+                if data_hora not in horarios_validos:
+                    erro = "Este horário não está mais disponível. Escolha outro."
+
+            if erro:
+                flash(erro, "danger")
+                return render_template("agendar_publico_horario.html",
+                                       estabelecimento=estabelecimento, estabelecimento_atual=estabelecimento,
+                                       servico=servico, profissionais=profissionais, now=datetime.now())
+
+            paciente = Paciente.query.filter_by(cpf=cpf).first()
+            if not paciente:
+                paciente = Paciente(nome_completo=nome_completo, cpf=cpf, telefone=telefone, email=email or None)
+                db.session.add(paciente)
+            else:
+                paciente.telefone = telefone or paciente.telefone
+                paciente.email = email or paciente.email
+            db.session.flush()
+
+            novo_agendamento = AgendamentoServico(
+                paciente_id=paciente.id,
+                profissional_id=profissional_id,
+                servico_id=servico.id,
+                data_agendamento=data_hora,
+                status='agendado',
+                observacoes="Agendado pelo próprio paciente via link público.",
+            )
+            db.session.add(novo_agendamento)
+            db.session.commit()
+
+            logger.info(f"Agendamento público criado: {paciente.nome_completo} - {servico.nome_servico} em {data_hora} (estabelecimento {estabelecimento.id})")
+            return redirect(url_for("agendar_publico_sucesso", slug=slug))
+
+        return render_template("agendar_publico_horario.html",
+                               estabelecimento=estabelecimento, estabelecimento_atual=estabelecimento,
+                               servico=servico, profissionais=profissionais, now=datetime.now())
+
+@app.route("/agendar/<slug>/sucesso")
+def agendar_publico_sucesso(slug):
+    estabelecimento = _resolver_estabelecimento_publico(slug)
+    return render_template("agendar_publico_sucesso.html", estabelecimento=estabelecimento,
+                           estabelecimento_atual=estabelecimento)
+
+@app.route("/agendar/<slug>/api/dias-disponiveis/<int:profissional_id>")
+def agendar_publico_dias_disponiveis(slug, profissional_id):
+    """Equivalente público de /api/profissional/<id>/dias-disponiveis."""
+    estabelecimento = _resolver_estabelecimento_publico(slug)
+    with usar_estabelecimento(estabelecimento.id):
+        dias_trabalho = db.session.query(HorarioAtendimento.dia_semana).filter(
+            HorarioAtendimento.profissional_id == profissional_id,
+            HorarioAtendimento.ativo == True
+        ).distinct().all()
+    return jsonify({'dias_disponiveis': [dia[0] for dia in dias_trabalho]})
+
+@app.route("/agendar/<slug>/api/horarios-disponiveis/<int:profissional_id>")
+def agendar_publico_horarios_disponiveis(slug, profissional_id):
+    """Equivalente público de /agenda/horarios-disponiveis/<id>."""
+    estabelecimento = _resolver_estabelecimento_publico(slug)
+    data_str = request.args.get('data')
+    servico_id = request.args.get('servico_id', type=int)
+    if not data_str:
+        return jsonify({'erro': 'Data não fornecida'}), 400
+    try:
+        data = datetime.strptime(data_str, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({'erro': 'Formato de data inválido'}), 400
+
+    with usar_estabelecimento(estabelecimento.id):
+        duracao_minutos = 60
+        if servico_id:
+            servico = db.session.get(ServicoEstetico, servico_id)
+            if servico and servico.duracao_minutos:
+                duracao_minutos = servico.duracao_minutos
+        horarios = calcular_horarios_disponiveis(profissional_id, data, duracao_minutos)
+    return jsonify({'horarios': [h.strftime("%H:%M") for h in horarios]})
 
 @app.route("/assinatura")
 @login_required
@@ -1204,7 +1370,14 @@ def home():
             AgendamentoServico.data_agendamento <= today_end,
             AgendamentoServico.status != 'cancelado'
         ).count()
-        
+
+        # Agendamentos futuros ainda não confirmados pela equipe — inclui os
+        # que vieram do link público de agendamento, que sempre nascem assim.
+        aguardando_confirmacao_count = AgendamentoServico.query.filter(
+            AgendamentoServico.data_agendamento >= datetime.now(),
+            AgendamentoServico.status == 'agendado'
+        ).count()
+
         proximos_agendamentos = AgendamentoServico.query.filter(
             AgendamentoServico.data_agendamento >= datetime.now(),
             AgendamentoServico.status.in_(['agendado', 'confirmado'])
@@ -1213,12 +1386,32 @@ def home():
         # Nova lógica para buscar horários livres
         proximos_horarios_livres = buscar_proximos_horarios_livres(limite=5)
 
+        # Checklist de primeiros passos: só aparece enquanto a clínica ainda
+        # não terminou a configuração básica necessária para o link público
+        # de agendamento funcionar de ponta a ponta.
+        tem_profissional = ProfissionalEstetico.query.count() > 0
+        tem_servico = ServicoEstetico.query.filter_by(ativo=True).count() > 0
+        tem_horario = HorarioAtendimento.query.filter_by(ativo=True).count() > 0
+        onboarding_completo = tem_profissional and tem_servico and tem_horario
+
+        link_agendamento_publico = None
+        if current_user.estabelecimento and current_user.estabelecimento.slug:
+            link_agendamento_publico = url_for(
+                'agendar_publico_inicio', slug=current_user.estabelecimento.slug, _external=True
+            )
+
         return render_template("home_admin_dashboard.html",
                                total_pacientes=total_pacientes,
                                agendamentos_hoje_count=agendamentos_hoje_count,
+                               aguardando_confirmacao_count=aguardando_confirmacao_count,
                                total_profissionais=total_profissionais,
                                proximos_agendamentos=proximos_agendamentos,
-                               proximos_horarios_livres=proximos_horarios_livres)
+                               proximos_horarios_livres=proximos_horarios_livres,
+                               tem_profissional=tem_profissional,
+                               tem_servico=tem_servico,
+                               tem_horario=tem_horario,
+                               onboarding_completo=onboarding_completo,
+                               link_agendamento_publico=link_agendamento_publico)
 
     # Para outros perfis, mostra a lista de pacientes
     query = request.args.get('q', '') # Pega o termo de busca da URL
@@ -1839,68 +2032,88 @@ def agendar_servico(paciente_id):
                          now=datetime.now(),
                          form=form)
 
-@app.route("/agenda/horarios-disponiveis/<int:profissional_id>")
-@login_required
-@requer_permissao('agendar')
-def horarios_disponiveis(profissional_id):
-    """Retorna horários disponíveis para um profissional (JSON)"""
-    data_str = request.args.get('data')
-    ignorar_agendamento_id = request.args.get('ignorar_agendamento_id', type=int)
-    
-    if not data_str:
-        return jsonify({'erro': 'Data não fornecida'}), 400
-    
-    try:
-        data = datetime.strptime(data_str, "%Y-%m-%d").date()
-    except ValueError:
-        return jsonify({'erro': 'Formato de data inválido'}), 400
-    
-    profissional = db.session.get(ProfissionalEstetico, profissional_id) # CORREÇÃO: Uso de db.session.get
-    if not profissional:
-        return jsonify({'erro': 'Profissional não encontrado'}), 404
-    
-    if not profissional.esta_disponivel(data):
-        return jsonify({'horarios': []})
-    
-    # Busca horário de atendimento para o dia da semana
+def calcular_horarios_disponiveis(profissional_id, data, duracao_minutos=60, ignorar_agendamento_id=None):
+    """Calcula os horários de início disponíveis para um profissional numa data.
+
+    Considera a duração do serviço: um horário só entra na lista se o
+    profissional estiver livre durante *todo* o atendimento, não só no
+    instante inicial — evita oferecer um horário que sobreporia o fim de um
+    atendimento mais longo já agendado (ex: um Botox de 90min agendado às
+    14h bloqueia até as 15h30, não só o slot das 14h)."""
+    profissional = db.session.get(ProfissionalEstetico, profissional_id)
+    if not profissional or not profissional.esta_disponivel(data):
+        return []
+
     dia_semana = data.weekday()
     horarios_do_dia = HorarioAtendimento.query.filter_by(
         profissional_id=profissional_id,
         dia_semana=dia_semana,
         ativo=True
     ).order_by(HorarioAtendimento.hora_inicio).all()
-    
-    if not horarios_do_dia:
-        return jsonify({'horarios': []})
-    
-    # Gera lista de horários disponíveis
-    horarios_disponiveis = []
-    agora = datetime.now()
 
-    # Busca todos os horários já agendados para o profissional no dia, para otimizar a consulta
+    if not horarios_do_dia:
+        return []
+
     query_agendamentos = AgendamentoServico.query.filter(
         AgendamentoServico.profissional_id == profissional_id,
         db.func.date(AgendamentoServico.data_agendamento) == data,
         AgendamentoServico.status != 'cancelado'
     )
-
     if ignorar_agendamento_id:
         query_agendamentos = query_agendamentos.filter(AgendamentoServico.id != ignorar_agendamento_id)
 
-    agendamentos_do_dia = {ag.data_agendamento for ag in query_agendamentos.all()}
+    ocupados = []
+    for ag in query_agendamentos.all():
+        inicio_ocupado = ag.data_agendamento
+        duracao_ocupada = ag.servico.duracao_minutos if ag.servico and ag.servico.duracao_minutos else 60
+        ocupados.append((inicio_ocupado, inicio_ocupado + timedelta(minutes=duracao_ocupada)))
+
+    agora = datetime.now()
+    duracao = timedelta(minutes=duracao_minutos or 60)
+    horarios = []
 
     for horario_bloco in horarios_do_dia:
         hora_atual = datetime.combine(data, horario_bloco.hora_inicio)
-        hora_fim = datetime.combine(data, horario_bloco.hora_fim)
-        
-        while hora_atual < hora_fim:
-            # Adiciona à lista se não houver agendamento e se o horário for no futuro
-            if hora_atual not in agendamentos_do_dia and hora_atual > agora:
-                horarios_disponiveis.append(hora_atual.strftime("%H:%M"))
-            
+        hora_fim_bloco = datetime.combine(data, horario_bloco.hora_fim)
+
+        while hora_atual + duracao <= hora_fim_bloco:
+            fim_candidato = hora_atual + duracao
+            conflita = any(
+                hora_atual < fim_ocupado and fim_candidato > inicio_ocupado
+                for inicio_ocupado, fim_ocupado in ocupados
+            )
+            if not conflita and hora_atual > agora:
+                horarios.append(hora_atual)
             hora_atual += timedelta(minutes=horario_bloco.intervalo_minutos)
-    
-    return jsonify({'horarios': horarios_disponiveis})
+
+    return horarios
+
+
+@app.route("/agenda/horarios-disponiveis/<int:profissional_id>")
+@login_required
+@requer_permissao('agendar')
+def horarios_disponiveis(profissional_id):
+    """Retorna horários disponíveis para um profissional (JSON)"""
+    data_str = request.args.get('data')
+    servico_id = request.args.get('servico_id', type=int)
+    ignorar_agendamento_id = request.args.get('ignorar_agendamento_id', type=int)
+
+    if not data_str:
+        return jsonify({'erro': 'Data não fornecida'}), 400
+
+    try:
+        data = datetime.strptime(data_str, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({'erro': 'Formato de data inválido'}), 400
+
+    duracao_minutos = 60
+    if servico_id:
+        servico = db.session.get(ServicoEstetico, servico_id)
+        if servico and servico.duracao_minutos:
+            duracao_minutos = servico.duracao_minutos
+
+    horarios = calcular_horarios_disponiveis(profissional_id, data, duracao_minutos, ignorar_agendamento_id)
+    return jsonify({'horarios': [h.strftime("%H:%M") for h in horarios]})
 
 @app.route("/agendamento/<int:agendamento_id>/editar", methods=["GET", "POST"])
 @login_required
@@ -2802,7 +3015,10 @@ def seed_super_admin_command():
         with usar_estabelecimento(None):
             estabelecimento_plataforma = Estabelecimento.query.filter_by(nome='Administração da Plataforma').first()
             if not estabelecimento_plataforma:
-                estabelecimento_plataforma = Estabelecimento(nome='Administração da Plataforma', status='ativo')
+                estabelecimento_plataforma = Estabelecimento(
+                    nome='Administração da Plataforma', status='ativo',
+                    slug=gerar_slug_unico('Administração da Plataforma'),
+                )
                 db.session.add(estabelecimento_plataforma)
                 db.session.commit()
 
@@ -2843,7 +3059,7 @@ def seed_demo_command():
     with app.app_context():
         estabelecimento = Estabelecimento.query.filter_by(nome='Clínica Demo').first()
         if not estabelecimento:
-            estabelecimento = Estabelecimento(nome='Clínica Demo', status='ativo')
+            estabelecimento = Estabelecimento(nome='Clínica Demo', status='ativo', slug=gerar_slug_unico('Clínica Demo'))
             db.session.add(estabelecimento)
             db.session.commit()
             print(f"✓ Estabelecimento 'Clínica Demo' criado (id={estabelecimento.id}).")

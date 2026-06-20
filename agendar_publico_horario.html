@@ -1,0 +1,179 @@
+{% extends "base_clinica.html" %}
+{% block title %}Agendar em {{ estabelecimento.nome }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="text-center mb-4">
+        <h2 class="mb-1"><i class="bi bi-calendar2-check"></i> Agendar um horário</h2>
+        <p class="text-muted">Passo 2 de 3 — escolha profissional, dia e horário para <strong>{{ servico.nome_servico }}</strong></p>
+    </div>
+
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-7">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <form method="POST" action="{{ url_for('agendar_publico_horario', slug=estabelecimento.slug) }}" id="form-agendamento-publico">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <input type="hidden" name="servico_id" value="{{ servico.id }}">
+
+                        <h6 class="text-uppercase text-muted small mb-3">Profissional, dia e horário</h6>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="profissional_id" class="form-label">Profissional</label>
+                                    <select class="form-select" id="profissional_id" name="profissional_id" required>
+                                        <option value="">Selecione...</option>
+                                        {% for profissional in profissionais %}
+                                        <option value="{{ profissional.id }}">{{ profissional.usuario.username|capitalize }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="data_agendamento" class="form-label">Dia</label>
+                                    <input type="date" class="form-control" id="data_agendamento" name="data_agendamento" min="{{ now.strftime('%Y-%m-%d') }}" required disabled>
+                                    <div id="dias-indisponiveis-aviso" class="form-text text-danger d-none">Este profissional não atende neste dia da semana.</div>
+                                    <div id="selecione-profissional-aviso" class="form-text text-muted">Escolha um profissional primeiro.</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="hora_agendamento" class="form-label">Horário disponível</label>
+                            <select class="form-select" id="hora_agendamento" name="hora_agendamento" required disabled>
+                                <option value="">Selecione o dia primeiro</option>
+                            </select>
+                            <div id="loading-horarios" class="form-text text-primary d-none">
+                                <span class="spinner-border spinner-border-sm"></span> Buscando horários...
+                            </div>
+                            <div id="sem-horarios-aviso" class="form-text text-muted d-none">Nenhum horário disponível para este dia — tente outra data.</div>
+                        </div>
+
+                        <hr class="my-4">
+                        <h6 class="text-uppercase text-muted small mb-3">Seus dados</h6>
+                        <div class="mb-3">
+                            <label for="nome_completo" class="form-label">Nome completo</label>
+                            <input type="text" class="form-control" id="nome_completo" name="nome_completo" required>
+                        </div>
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="cpf" class="form-label">CPF</label>
+                                    <input type="text" class="form-control" id="cpf" name="cpf" placeholder="000.000.000-00" required>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label for="telefone" class="form-label">Telefone</label>
+                                    <input type="text" class="form-control" id="telefone" name="telefone" placeholder="(00) 00000-0000" required>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label for="email" class="form-label">E-mail (opcional)</label>
+                            <input type="email" class="form-control" id="email" name="email">
+                            <div class="form-text">Se informado, você recebe a confirmação por e-mail.</div>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-4">
+                            <a href="{{ url_for('agendar_publico_inicio', slug=estabelecimento.slug) }}" class="btn btn-outline-secondary">Voltar</a>
+                            <button type="submit" class="btn btn-primary" id="btn-agendar" disabled>
+                                <i class="bi bi-check-circle"></i> Solicitar agendamento
+                            </button>
+                        </div>
+                        <p class="text-muted small mt-3 mb-0">
+                            <i class="bi bi-info-circle"></i> Seu horário fica reservado como <strong>pendente</strong> até a clínica confirmar. Você será avisado quando isso acontecer.
+                        </p>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const slug = {{ estabelecimento.slug|tojson }};
+    const servicoId = {{ servico.id }};
+    const profissionalSelect = document.getElementById('profissional_id');
+    const dataInput = document.getElementById('data_agendamento');
+    const horaSelect = document.getElementById('hora_agendamento');
+    const btnAgendar = document.getElementById('btn-agendar');
+    const loadingSpinner = document.getElementById('loading-horarios');
+    const semHorariosAviso = document.getElementById('sem-horarios-aviso');
+    const diasIndisponiveisAviso = document.getElementById('dias-indisponiveis-aviso');
+    const selecioneProfissionalAviso = document.getElementById('selecione-profissional-aviso');
+    let diasDisponiveis = [];
+
+    async function buscarDiasDisponiveis() {
+        const profissionalId = profissionalSelect.value;
+        horaSelect.innerHTML = '<option value="">Selecione o dia primeiro</option>';
+        horaSelect.disabled = true;
+        btnAgendar.disabled = true;
+
+        if (!profissionalId) {
+            dataInput.disabled = true;
+            dataInput.value = '';
+            selecioneProfissionalAviso.classList.remove('d-none');
+            return;
+        }
+
+        dataInput.disabled = false;
+        selecioneProfissionalAviso.classList.add('d-none');
+
+        const response = await fetch(`/agendar/${slug}/api/dias-disponiveis/${profissionalId}`);
+        const data = await response.json();
+        diasDisponiveis = data.dias_disponiveis || [];
+        if (dataInput.value) validarDiaSemana();
+    }
+
+    function validarDiaSemana() {
+        if (!dataInput.value) return;
+        const dataSelecionada = new Date(dataInput.value + 'T00:00:00');
+        const diaDaSemana = (dataSelecionada.getUTCDay() + 6) % 7; // 0=Seg, 1=Ter...
+
+        if (diasDisponiveis.includes(diaDaSemana)) {
+            diasIndisponiveisAviso.classList.add('d-none');
+            buscarHorarios();
+        } else {
+            diasIndisponiveisAviso.classList.remove('d-none');
+            horaSelect.innerHTML = '<option value="">Selecione uma data válida</option>';
+            horaSelect.disabled = true;
+            btnAgendar.disabled = true;
+        }
+    }
+
+    async function buscarHorarios() {
+        const profissionalId = profissionalSelect.value;
+        const dataSelecionada = dataInput.value;
+        if (!profissionalId || !dataSelecionada) return;
+
+        horaSelect.disabled = true;
+        btnAgendar.disabled = true;
+        loadingSpinner.classList.remove('d-none');
+        semHorariosAviso.classList.add('d-none');
+        horaSelect.innerHTML = '<option value="">Carregando...</option>';
+
+        try {
+            const response = await fetch(`/agendar/${slug}/api/horarios-disponiveis/${profissionalId}?data=${dataSelecionada}&servico_id=${servicoId}`);
+            const data = await response.json();
+
+            horaSelect.innerHTML = '';
+            if (data.horarios && data.horarios.length > 0) {
+                data.horarios.forEach(hora => horaSelect.add(new Option(hora, hora)));
+                horaSelect.disabled = false;
+                btnAgendar.disabled = false;
+            } else {
+                horaSelect.innerHTML = '<option value="">Sem horários disponíveis</option>';
+                semHorariosAviso.classList.remove('d-none');
+            }
+        } finally {
+            loadingSpinner.classList.add('d-none');
+        }
+    }
+
+    profissionalSelect.addEventListener('change', buscarDiasDisponiveis);
+    dataInput.addEventListener('change', validarDiaSemana);
+});
+</script>
+{% endblock %}

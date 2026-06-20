@@ -1,0 +1,38 @@
+{% extends "base_clinica.html" %}
+{% block title %}Agendar em {{ estabelecimento.nome }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="text-center mb-4">
+        <h2 class="mb-1"><i class="bi bi-calendar2-check"></i> Agendar um horário</h2>
+        <p class="text-muted">Passo 1 de 3 — escolha o serviço desejado em <strong>{{ estabelecimento.nome }}</strong></p>
+    </div>
+
+    {% if servicos %}
+    <div class="row justify-content-center">
+        {% for servico in servicos %}
+        <div class="col-md-6 col-lg-4 mb-3">
+            <a href="{{ url_for('agendar_publico_horario', slug=estabelecimento.slug, servico_id=servico.id) }}" class="text-decoration-none">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ servico.nome_servico }}</h5>
+                        {% if servico.descricao %}
+                        <p class="card-text text-muted small">{{ servico.descricao }}</p>
+                        {% endif %}
+                        <div class="d-flex justify-content-between mt-3">
+                            <span class="badge bg-light text-dark border"><i class="bi bi-clock"></i> {{ servico.duracao_minutos }} min</span>
+                            <span class="fw-bold text-success">R$ {{ "%.2f"|format(servico.preco) }}</span>
+                        </div>
+                    </div>
+                </div>
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="alert alert-info text-center">
+        Esta clínica ainda não cadastrou serviços disponíveis para agendamento online. Entre em contato diretamente com ela.
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

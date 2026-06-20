@@ -10,9 +10,80 @@
         </div>
     </div>
 
+    {% if not onboarding_completo %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card border-primary">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-list-check"></i> Primeiros passos para começar a receber agendamentos</h5>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Siga esta ordem — cada passo depende do anterior para o link de agendamento online funcionar.</p>
+                    <div class="list-group">
+                        <div class="list-group-item d-flex justify-content-between align-items-center {% if tem_profissional %}list-group-item-success{% endif %}">
+                            <span>
+                                <i class="bi {% if tem_profissional %}bi-check-circle-fill text-success{% else %}bi-1-circle{% endif %} me-2"></i>
+                                Cadastre ao menos um profissional
+                            </span>
+                            {% if not tem_profissional %}<a href="{{ url_for('novo_profissional') }}" class="btn btn-sm btn-primary">Cadastrar profissional</a>{% endif %}
+                        </div>
+                        <div class="list-group-item d-flex justify-content-between align-items-center {% if tem_servico %}list-group-item-success{% endif %}">
+                            <span>
+                                <i class="bi {% if tem_servico %}bi-check-circle-fill text-success{% else %}bi-2-circle{% endif %} me-2"></i>
+                                Cadastre ao menos um serviço ativo (com preço e duração)
+                            </span>
+                            {% if not tem_servico %}<a href="{{ url_for('novo_servico') }}" class="btn btn-sm btn-primary">Cadastrar serviço</a>{% endif %}
+                        </div>
+                        <div class="list-group-item d-flex justify-content-between align-items-center {% if tem_horario %}list-group-item-success{% endif %}">
+                            <span>
+                                <i class="bi {% if tem_horario %}bi-check-circle-fill text-success{% else %}bi-3-circle{% endif %} me-2"></i>
+                                Configure os horários de atendimento de cada profissional
+                            </span>
+                            {% if tem_profissional and not tem_horario %}<a href="{{ url_for('listar_profissionais') }}" class="btn btn-sm btn-primary">Configurar horários</a>{% endif %}
+                        </div>
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <span><i class="bi bi-4-circle me-2"></i>Compartilhe seu link de agendamento com os pacientes (abaixo)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if link_agendamento_publico %}
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body d-flex flex-wrap align-items-center justify-content-between gap-2">
+                    <div>
+                        <h6 class="mb-1"><i class="bi bi-link-45deg"></i> Seu link de agendamento online</h6>
+                        <p class="text-muted small mb-0">Compartilhe no WhatsApp, Instagram ou onde preferir. O paciente escolhe o horário e a equipe confirma aqui no sistema.</p>
+                    </div>
+                    <div class="input-group" style="max-width: 420px;">
+                        <input type="text" class="form-control form-control-sm" id="link-agendamento-publico" value="{{ link_agendamento_publico }}" readonly>
+                        <button class="btn btn-sm btn-outline-primary" type="button" id="btn-copiar-link">
+                            <i class="bi bi-clipboard"></i> Copiar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+    document.getElementById('btn-copiar-link').addEventListener('click', function() {
+        const input = document.getElementById('link-agendamento-publico');
+        navigator.clipboard.writeText(input.value).then(() => {
+            this.innerHTML = '<i class="bi bi-check2"></i> Copiado!';
+            setTimeout(() => { this.innerHTML = '<i class="bi bi-clipboard"></i> Copiar'; }, 2000);
+        });
+    });
+    </script>
+    {% endif %}
+
     <!-- Cards de Estatísticas -->
     <div class="row">
-        <div class="col-md-4 mb-4">
+        <div class="col-md-3 mb-4">
             <div class="card dashboard-card h-100">
                 <div class="card-body d-flex justify-content-between align-items-center">
                     <div>
@@ -27,7 +98,22 @@
                 </a>
             </div>
         </div>
-        <div class="col-md-4 mb-4">
+        <div class="col-md-3 mb-4">
+            <div class="card dashboard-card h-100 {% if aguardando_confirmacao_count > 0 %}border-warning{% endif %}">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="card-title">Aguardando Confirmação</h5>
+                        <h2 class="display-4">{{ aguardando_confirmacao_count }}</h2>
+                    </div>
+                    <i class="bi bi-hourglass-split" style="font-size: 4rem; opacity: 0.7;"></i>
+                </div>
+                <a href="{{ url_for('agenda_calendario') }}" class="card-footer text-white d-flex justify-content-between">
+                    <span>Confirmar agendamentos</span>
+                    <i class="bi bi-arrow-right-circle"></i>
+                </a>
+            </div>
+        </div>
+        <div class="col-md-3 mb-4">
             <div class="card dashboard-card h-100">
                 <div class="card-body d-flex justify-content-between align-items-center">
                     <div>
@@ -42,7 +128,7 @@
                 </a>
             </div>
         </div>
-        <div class="col-md-4 mb-4">
+        <div class="col-md-3 mb-4">
             <div class="card dashboard-card h-100">
                 <div class="card-body d-flex justify-content-between align-items-center">
                     <div>

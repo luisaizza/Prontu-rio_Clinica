@@ -33,6 +33,12 @@ O repositório inclui um `render.yaml` (Blueprint). **A versão atual está conf
 - Os comandos de cron (`flask lembretes-diarios`, `flask lembretes-retorno`) já iteram por todos os estabelecimentos ativos/em trial automaticamente.
 - O usuário com `eh_super_admin=True` (ver acima) não pertence a uma clínica específica: ele loga, escolhe uma clínica em `/admin-plataforma` e passa a operar dentro dela com acesso total (criar/editar/excluir), até clicar em "Trocar de clínica". Esse usuário nunca é bloqueado pelo gate de trial/assinatura.
 
+### Agendamento público (paciente agenda sozinho)
+- Cada estabelecimento tem um `slug` único, gerado automaticamente a partir do nome na criação (`/criar-clinica`) e exibido como link compartilhável em `/agendar/<slug>` — visível e copiável no Dashboard e em "Aparência".
+- Fluxo: paciente escolhe o serviço → profissional → dia/horário (só aparecem horários realmente livres, já considerando a duração do serviço, sem login) → preenche nome/CPF/telefone/e-mail → envia.
+- O agendamento criado nasce com `status='agendado'`, o mesmo estado "pendente" de qualquer agendamento no sistema — a equipe confirma pela Agenda normalmente. Enquanto pendente, ele aparece no card "Aguardando Confirmação" do Dashboard.
+- Se o estabelecimento estiver em modo somente leitura (trial vencido/inadimplente/cancelado), o agendamento público fica bloqueado (mesma regra que já vale para a equipe).
+
 ---
 
 ## ⚠️ Checklist de Segurança

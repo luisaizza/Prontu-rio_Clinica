@@ -21,6 +21,19 @@
                             <input type="text" class="form-control" id="nome" name="nome" value="{{ estabelecimento.nome }}" required>
                         </div>
 
+                        {% if estabelecimento.slug %}
+                        <div class="mb-4">
+                            <label class="form-label">Link de agendamento online</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="link-agendamento-tema" value="{{ url_for('agendar_publico_inicio', slug=estabelecimento.slug, _external=True) }}" readonly>
+                                <button class="btn btn-outline-primary" type="button" id="btn-copiar-link-tema">
+                                    <i class="bi bi-clipboard"></i> Copiar
+                                </button>
+                            </div>
+                            <small class="text-muted">Compartilhe este link com seus pacientes para que eles agendem sozinhos — você confirma cada horário na Agenda.</small>
+                        </div>
+                        {% endif %}
+
                         <div class="mb-4">
                             <label for="logo" class="form-label">Logo</label>
                             {% if estabelecimento.logo_filename %}
@@ -107,4 +120,15 @@
         </div>
     </div>
 </div>
+{% if estabelecimento.slug %}
+<script>
+document.getElementById('btn-copiar-link-tema').addEventListener('click', function() {
+    const input = document.getElementById('link-agendamento-tema');
+    navigator.clipboard.writeText(input.value).then(() => {
+        this.innerHTML = '<i class="bi bi-check2"></i> Copiado!';
+        setTimeout(() => { this.innerHTML = '<i class="bi bi-clipboard"></i> Copiar'; }, 2000);
+    });
+});
+</script>
+{% endif %}
 {% endblock %}

@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         try {
             // Adiciona parâmetro para ignorar o agendamento atual na verificação de conflito
-            const response = await fetch(`/agenda/horarios-disponiveis/${profissionalId}?data=${data}&ignorar_agendamento_id={{ agendamento.id }}`);
+            const response = await fetch(`/agenda/horarios-disponiveis/${profissionalId}?data=${data}&servico_id={{ agendamento.servico_id }}&ignorar_agendamento_id={{ agendamento.id }}`);
             const result = await response.json();
             
             horaSelect.innerHTML = '<option value="">Selecione...</option>';

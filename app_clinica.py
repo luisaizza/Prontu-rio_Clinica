@@ -130,13 +130,7 @@ def requer_perfil(perfil):
 @app.context_processor
 def inject_utilities():
     """Injeta utilitários em todos os templates."""
-    estabelecimento_atual = None
-    if current_user.is_authenticated:
-        if current_user.eh_super_admin:
-            entrou_id = session.get('super_admin_estabelecimento_id')
-            estabelecimento_atual = db.session.get(Estabelecimento, entrou_id) if entrou_id else None
-        else:
-            estabelecimento_atual = current_user.estabelecimento
+    estabelecimento_atual = obter_estabelecimento_ativo() if current_user.is_authenticated else None
     return {
         'current_year': datetime.now().year,
         'now': datetime.now(),
@@ -579,6 +573,26 @@ class AuditLog(TenantMixin, db.Model):
 
     user = db.relationship('User', foreign_keys=[user_id])
 
+
+def obter_estabelecimento_ativo():
+    """Retorna o Estabelecimento "ativo" para o usuário logado.
+
+    Para um usuário normal é sempre `current_user.estabelecimento` (o dono da
+    conta). Para o admin da plataforma (`eh_super_admin`), porém, o
+    estabelecimento "ativo" é o que ele escolheu em /admin-plataforma (guardado
+    na sessão) — NUNCA o estabelecimento-âncora do próprio usuário, que existe
+    só para satisfazer a FK do TenantMixin e nunca tem dados reais de clínica.
+
+    Qualquer rota que precise do estabelecimento do usuário logado (link de
+    agendamento público, e-mails, Aparência, Assinatura etc.) deve usar esta
+    função em vez de `current_user.estabelecimento` diretamente, ou vai pegar
+    o estabelecimento errado quando o admin da plataforma estiver operando
+    dentro de uma clínica."""
+    if current_user.eh_super_admin:
+        entrou_id = session.get('super_admin_estabelecimento_id')
+        return db.session.get(Estabelecimento, entrou_id) if entrou_id else None
+    return current_user.estabelecimento
+
 # --- ROTAS DE AUTENTICAÇÃO ---
 
 @login_manager.user_loader
@@ -835,7 +849,7 @@ def registro():
             username=username,
             password_hash=hashed_password,
             perfil=perfil,
-            estabelecimento_id=current_user.estabelecimento_id,
+            estabelecimento_id=obter_estabelecimento_ativo().id,
         )
         db.session.add(novo_usuario)
         db.session.commit()
@@ -1188,7 +1202,7 @@ def agendar_publico_horarios_disponiveis(slug, profissional_id):
 @login_required
 def assinatura():
     """Mostra o status do trial/assinatura do estabelecimento e permite assinar."""
-    estabelecimento = current_user.estabelecimento
+    estabelecimento = obter_estabelecimento_ativo()
     return render_template("assinatura.html", estabelecimento=estabelecimento)
 
 @app.route("/assinatura/checkout", methods=["POST"])
@@ -1394,10 +1408,11 @@ def home():
         tem_horario = HorarioAtendimento.query.filter_by(ativo=True).count() > 0
         onboarding_completo = tem_profissional and tem_servico and tem_horario
 
+        estabelecimento_do_usuario = obter_estabelecimento_ativo()
         link_agendamento_publico = None
-        if current_user.estabelecimento and current_user.estabelecimento.slug:
+        if estabelecimento_do_usuario and estabelecimento_do_usuario.slug:
             link_agendamento_publico = url_for(
-                'agendar_publico_inicio', slug=current_user.estabelecimento.slug, _external=True
+                'agendar_publico_inicio', slug=estabelecimento_do_usuario.slug, _external=True
             )
 
         return render_template("home_admin_dashboard.html",
@@ -1984,8 +1999,9 @@ def agendar_servico(paciente_id):
             db.session.commit()
 
             # Enviar e-mail de confirmação
-            if paciente.email:
-                assunto = f"Confirmação de Agendamento - {current_user.estabelecimento.nome}"
+            estabelecimento_atual_agendamento = obter_estabelecimento_ativo()
+            if paciente.email and estabelecimento_atual_agendamento:
+                assunto = f"Confirmação de Agendamento - {estabelecimento_atual_agendamento.nome}"
                 corpo = f"""
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
                     <div style="background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 1px solid #e0e0e0;">
@@ -2006,11 +2022,11 @@ def agendar_servico(paciente_id):
                         <p style="color: #555; font-size: 14px; text-align: center;">Caso precise reagendar, entre em contato conosco.</p>
                     </div>
                     <div style="background-color: #f8f9fa; padding: 15px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #e0e0e0;">
-                        <p style="margin: 0;">&copy; {datetime.now().year} {current_user.estabelecimento.nome}. Todos os direitos reservados.</p>
+                        <p style="margin: 0;">&copy; {datetime.now().year} {estabelecimento_atual_agendamento.nome}. Todos os direitos reservados.</p>
                     </div>
                 </div>
                 """
-                enviar_email(current_user.estabelecimento, paciente.email, assunto, corpo)
+                enviar_email(estabelecimento_atual_agendamento, paciente.email, assunto, corpo)
             
             logger.info(f"Agendamento criado: {paciente.nome_completo} - {novo_agendamento.servico.nome_servico} em {data_hora}")
             flash(f"Serviço agendado com sucesso para {data_hora.strftime('%d/%m/%Y às %H:%M')}!", "success")
@@ -2508,7 +2524,7 @@ def auditoria_logs():
 @requer_permissao('gerenciar_usuarios') # Apenas admins podem personalizar
 def personalizar_tema():
     """Página para personalizar a marca/tema do estabelecimento (cores, logo, e-mail)."""
-    estabelecimento = current_user.estabelecimento
+    estabelecimento = obter_estabelecimento_ativo()
 
     if request.method == "POST":
         nome = request.form.get("nome")

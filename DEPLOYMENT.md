@@ -2,21 +2,24 @@
 
 ## ☁️ Deploy no Render (recomendado para este projeto)
 
-O repositório já inclui um `render.yaml` (Blueprint) que descreve toda a infraestrutura necessária: o serviço web, um banco Postgres gerenciado, um disco persistente para as fotos de pacientes e um cron job para os lembretes de agendamento.
+O repositório inclui um `render.yaml` (Blueprint). **A versão atual está configurada para o plano `free` do Render**, para validar o sistema sem custo, com duas limitações importantes (detalhadas abaixo): uploads não são persistentes e não há cron job de lembretes.
 
 ### Passo a passo
 
 1. **Suba o código para um repositório Git** (GitHub/GitLab) — o Render faz deploy a partir de um repo conectado. Confirme que `.venv/`, `build/`, `dist/`, `instance/` e `uploads_clinica/*` não foram versionados (já estão no `.gitignore`).
-2. No painel do Render, escolha **New → Blueprint** e selecione o repositório. O Render vai ler o `render.yaml` e propor a criação de:
-   - `prontuario-clinica` (Web Service, Gunicorn)
-   - `prontuario-clinica-db` (Postgres gerenciado)
-   - `prontuario-clinica-lembretes` (Cron Job, roda `flask lembretes-diarios` a cada 4h)
-   - Um disco persistente de 1GB montado em `/var/data`, para `uploads_clinica`
+2. No painel do Render, escolha **New → Blueprint** (não "Web Service" manual — só o Blueprint lê o `render.yaml`) e selecione o repositório. O Render vai propor a criação de:
+   - `prontuario-clinica` (Web Service, Gunicorn, plano free)
+   - `prontuario-clinica-db` (Postgres gerenciado, plano free)
 3. `SECRET_KEY` é gerada automaticamente pelo Render (`generateValue: true`) — não precisa configurar manualmente.
 4. `DATABASE_URL` é injetada automaticamente a partir do Postgres criado — não precisa configurar manualmente.
 5. Após o primeiro deploy, o `preDeployCommand: flask db upgrade` já cria todas as tabelas no Postgres.
 6. **Não há mais bootstrap manual de admin**: o sistema é multi-tenant self-service. Cada clínica se cadastra sozinha em `https://seu-servico.onrender.com/criar-clinica`, o que cria o `Estabelecimento` (com 30 dias de trial) e o primeiro usuário administrador daquela clínica. Não existe mais a rota `/setup` nem as variáveis `SETUP_ENABLED`/`SETUP_USERNAME`/`SETUP_PASSWORD`.
-7. As fotos de pacientes e os logos de clínica são salvos em `UPLOAD_FOLDER=/var/data/uploads_clinica` (configurado no `render.yaml`), dentro do disco persistente — sobrevivem a deploys e restarts.
+
+### ⚠️ Limitações do plano free (aceitas por ora, para testar sem custo)
+- **Uploads não persistem**: o plano free do Render não permite disco persistente. Fotos de pacientes e logo da clínica são salvos num diretório local efêmero (`uploads_clinica/`, dentro do próprio serviço) e **somem a cada novo deploy ou restart**. Para resolver de vez, é preciso voltar para um plano pago com `disk:` no `render.yaml` (como na versão anterior deste arquivo) ou migrar os uploads para um storage externo (S3-compatível).
+- **Sem lembretes automáticos**: o Cron Job (`flask lembretes-diarios` / `flask lembretes-retorno`) foi removido do `render.yaml` porque Cron Jobs no Render exigem plano pago. Os lembretes por e-mail (de agendamento e de retorno de procedimento) não disparam sozinhos enquanto isso. Pra rodar manualmente, use o **Shell** do serviço web no painel do Render e execute `flask lembretes-diarios` ou `flask lembretes-retorno` à mão.
+- **Postgres free expira em 90 dias**: o Render apaga bancos no plano free após 90 dias de inatividade do plano (não de uso) — para produção real, faça upgrade antes do prazo.
+- Quando for para produção paga, restaure o `disk:` no serviço web, o `UPLOAD_FOLDER=/var/data/uploads_clinica`, o serviço de `type: cron`, e troque `plan: free` por `plan: starter` (ou outro pago) no banco e no web service.
 
 ### Atualizações futuras
 - Ao alterar modelos do banco, gere uma nova migration localmente (`flask db migrate -m "descrição"`) e faça commit da pasta `migrations/`. O próprio `preDeployCommand` aplica (`flask db upgrade`) no próximo deploy.

@@ -14,6 +14,14 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Custom CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% if estabelecimento_atual and (estabelecimento_atual.cor_primaria or estabelecimento_atual.cor_acento) %}
+    <style>
+        :root {
+            --cor-primaria: {{ estabelecimento_atual.cor_primaria or '#9c27b0' }};
+            --cor-acento: {{ estabelecimento_atual.cor_acento or '#e91e63' }};
+        }
+    </style>
+    {% endif %}
     {% block head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
@@ -43,6 +51,9 @@
                     <p class="sidebar-section-title">Agenda</p>
                     <a href="{{ url_for('agenda_calendario') }}" class="sidebar-link {% if request.endpoint == 'agenda_calendario' %}active{% endif %}">
                         <i class="bi bi-calendar3"></i><span>Calendário</span>
+                    </a>
+                    <a href="{{ url_for('agenda') }}" class="sidebar-link {% if request.endpoint == 'agenda' %}active{% endif %}">
+                        <i class="bi bi-list-check"></i><span>Lista de Agendamentos</span>
                     </a>
                     {% if current_user.tem_permissao('minha_agenda') %}
                     <a href="{{ url_for('minha_agenda') }}" class="sidebar-link {% if request.endpoint == 'minha_agenda' %}active{% endif %}">

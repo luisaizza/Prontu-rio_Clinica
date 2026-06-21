@@ -7,7 +7,7 @@
 :root {
     /* Paleta de Cores Sofisticada e Feminina (Tema "Elegance Rosa") */
     --cor-primaria: #9c27b0;          /* Roxo elegante para botões e cabeçalhos */
-    --cor-primaria-hover: #7b1fa2;   /* Tom mais escuro para hover */
+    --cor-primaria-hover: color-mix(in srgb, var(--cor-primaria) 82%, black);   /* Tom mais escuro para hover, derivado automaticamente */
     --cor-secundaria: #fce4ec;        /* Rosa claro para fundos e detalhes */
     --cor-fundo: #fafafa;             /* Branco suave para o fundo geral */
     --cor-fundo-card: #ffffff;        /* Branco para cards e containers */
@@ -473,6 +473,15 @@ h1, h2, h3, h4, h5, h6 {
 .dashboard-card:hover {
     transform: translateY(-5px);
     box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.dashboard-card-clickable {
+    cursor: pointer;
+}
+
+.dashboard-card-clickable:hover {
+    outline: 3px solid color-mix(in srgb, var(--cor-acento) 45%, transparent);
+    outline-offset: 2px;
 }
 
 .dashboard-card .card-body {

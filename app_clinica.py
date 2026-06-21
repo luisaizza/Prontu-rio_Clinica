@@ -306,7 +306,8 @@ class Estabelecimento(db.Model):
 
     # Tema/marca (antes em Configuracao, agora por estabelecimento)
     cor_novos_pacientes = db.Column(db.String(50), default='text-success')
-    cor_cabecalho = db.Column(db.String(50), default='bg-light navbar-light')
+    cor_primaria = db.Column(db.String(7), default='#9c27b0')
+    cor_acento = db.Column(db.String(7), default='#e91e63')
     email_clinica = db.Column(db.String(120))
     senha_email_clinica = db.Column(db.String(200))
     dias_reenvio_lembrete_retorno = db.Column(db.Integer, default=7)
@@ -1771,18 +1772,23 @@ def editar_exame_fisico(paciente_id, exame_id):
 def agenda():
     """Visualiza a agenda geral de atendimentos"""
     pagina = request.args.get('pagina', 1, type=int)
-    
+    status_filtro = request.args.get('status', '')
+
     # Filtra agendamentos por data (próximos 30 dias)
     data_inicio = datetime.now()
     data_fim = data_inicio + timedelta(days=30)
-    
-    agendamentos = AgendamentoServico.query.filter(
+
+    query = AgendamentoServico.query.filter(
         AgendamentoServico.data_agendamento >= data_inicio,
         AgendamentoServico.data_agendamento <= data_fim
-    ).order_by(AgendamentoServico.data_agendamento.asc()).paginate(page=pagina, per_page=10)
-    
+    )
+    if status_filtro:
+        query = query.filter(AgendamentoServico.status == status_filtro)
+
+    agendamentos = query.order_by(AgendamentoServico.data_agendamento.asc()).paginate(page=pagina, per_page=10)
+
     logger.info(f"Usuário {current_user.username} acessou a agenda")
-    return render_template("agenda_clinica.html", agendamentos=agendamentos)
+    return render_template("agenda_clinica.html", agendamentos=agendamentos, status_filtro=status_filtro)
 
 @app.route("/agenda/minha")
 @login_required
@@ -2410,9 +2416,12 @@ def listar_profissionais():
 @requer_permissao('gerenciar_profissionais')
 def novo_profissional():
     """Cria um novo perfil de profissional associado a um usuário."""
-    # Busca usuários que são 'esteta' e ainda não têm perfil profissional
+    # Busca usuários que ainda não têm perfil profissional. Inclui também o
+    # perfil 'admin' — em clínicas pequenas é comum o próprio admin ser quem
+    # atende os pacientes, e sem um ProfissionalEstetico associado ele nunca
+    # aparece na agenda nem em "Minha Agenda".
     usuarios_sem_perfil = User.query.filter(
-        User.perfil == 'esteta',
+        User.perfil.in_(['esteta', 'admin']),
         ~User.id.in_(db.session.query(ProfissionalEstetico.usuario_id))
     ).all()
     
@@ -2529,17 +2538,22 @@ def personalizar_tema():
     if request.method == "POST":
         nome = request.form.get("nome")
         cor_novos = request.form.get("cor_novos_pacientes")
-        cor_cabecalho = request.form.get("cor_cabecalho")
+        cor_primaria = request.form.get("cor_primaria")
+        cor_acento = request.form.get("cor_acento")
         email_clinica = request.form.get("email_clinica")
         senha_email = request.form.get("senha_email_clinica")
         dias_reenvio_retorno = request.form.get("dias_reenvio_lembrete_retorno", type=int)
+
+        cor_hex_regex = re.compile(r'^#[0-9a-fA-F]{6}$')
 
         if nome:
             estabelecimento.nome = nome
         if cor_novos:
             estabelecimento.cor_novos_pacientes = cor_novos
-        if cor_cabecalho:
-            estabelecimento.cor_cabecalho = cor_cabecalho
+        if cor_primaria and cor_hex_regex.match(cor_primaria):
+            estabelecimento.cor_primaria = cor_primaria
+        if cor_acento and cor_hex_regex.match(cor_acento):
+            estabelecimento.cor_acento = cor_acento
         if email_clinica is not None:  # Pode ser string vazia para limpar
             estabelecimento.email_clinica = email_clinica
         if senha_email is not None:

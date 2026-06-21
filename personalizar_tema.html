@@ -69,24 +69,27 @@
                             </div>
                         </div>
 
-                        <h6 class="mb-3 border-bottom pb-2">Cabeçalho (Menu Superior)</h6>
+                        <h6 class="mb-3 border-bottom pb-2">Cores do Sistema</h6>
+                        <p class="text-muted small">Escolha as duas cores principais usadas no menu lateral, botões e destaques em todo o sistema.</p>
 
-                        <div class="mb-4">
-                            <label class="form-label d-block mb-2">Cor do Cabeçalho</label>
-                            <div class="d-flex flex-wrap gap-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="cor_cabecalho" id="headerLight" value="bg-light navbar-light" {% if estabelecimento.cor_cabecalho == 'bg-light navbar-light' %}checked{% endif %}>
-                                    <label class="form-check-label bg-light text-dark border px-2 rounded" for="headerLight">Claro (Padrão)</label>
-                                </div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="cor_cabecalho" id="headerPrimary" value="bg-primary navbar-dark" {% if estabelecimento.cor_cabecalho == 'bg-primary navbar-dark' %}checked{% endif %}>
-                                    <label class="form-check-label bg-primary text-white px-2 rounded" for="headerPrimary">Azul</label>
-                                </div>
-                                <div class="form-check">
-                                    <input class="form-check-input" type="radio" name="cor_cabecalho" id="headerDark" value="bg-dark navbar-dark" {% if estabelecimento.cor_cabecalho == 'bg-dark navbar-dark' %}checked{% endif %}>
-                                    <label class="form-check-label bg-dark text-white px-2 rounded" for="headerDark">Escuro</label>
+                        <div class="row mb-3">
+                            <div class="col-md-6">
+                                <label for="cor_primaria" class="form-label">Cor principal</label>
+                                <div class="input-group">
+                                    <input type="color" class="form-control form-control-color" id="cor_primaria" name="cor_primaria" value="{{ estabelecimento.cor_primaria or '#9c27b0' }}" title="Escolha a cor principal">
+                                    <input type="text" class="form-control" id="cor_primaria_hex" value="{{ estabelecimento.cor_primaria or '#9c27b0' }}" readonly>
                                 </div>
                             </div>
+                            <div class="col-md-6">
+                                <label for="cor_acento" class="form-label">Cor de destaque</label>
+                                <div class="input-group">
+                                    <input type="color" class="form-control form-control-color" id="cor_acento" name="cor_acento" value="{{ estabelecimento.cor_acento or '#e91e63' }}" title="Escolha a cor de destaque">
+                                    <input type="text" class="form-control" id="cor_acento_hex" value="{{ estabelecimento.cor_acento or '#e91e63' }}" readonly>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mb-4 p-3 rounded" id="preview-cores" style="background: linear-gradient(135deg, {{ estabelecimento.cor_primaria or '#9c27b0' }}, {{ estabelecimento.cor_acento or '#e91e63' }});">
+                            <span class="text-white fw-bold"><i class="bi bi-eye me-2"></i>Pré-visualização das cores</span>
                         </div>
 
                         <h6 class="mb-3 border-bottom pb-2">Configurações de E-mail (Notificações)</h6>
@@ -131,4 +134,22 @@ document.getElementById('btn-copiar-link-tema').addEventListener('click', functi
 });
 </script>
 {% endif %}
+<script>
+(function() {
+    const corPrimaria = document.getElementById('cor_primaria');
+    const corAcento = document.getElementById('cor_acento');
+    const corPrimariaHex = document.getElementById('cor_primaria_hex');
+    const corAcentoHex = document.getElementById('cor_acento_hex');
+    const preview = document.getElementById('preview-cores');
+
+    function atualizarPreview() {
+        corPrimariaHex.value = corPrimaria.value;
+        corAcentoHex.value = corAcento.value;
+        preview.style.background = `linear-gradient(135deg, ${corPrimaria.value}, ${corAcento.value})`;
+    }
+
+    corPrimaria.addEventListener('input', atualizarPreview);
+    corAcento.addEventListener('input', atualizarPreview);
+})();
+</script>
 {% endblock %}

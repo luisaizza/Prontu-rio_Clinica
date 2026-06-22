@@ -23,7 +23,7 @@ def upgrade():
     sa.Column('nome', sa.String(length=150), nullable=False),
     sa.Column('endereco', sa.String(length=300), nullable=True),
     sa.Column('telefone', sa.String(length=20), nullable=True),
-    sa.Column('ativo', sa.Boolean(), server_default=sa.text('1'), nullable=False),
+    sa.Column('ativo', sa.Boolean(), server_default=sa.true(), nullable=False),
     sa.Column('estabelecimento_id', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['estabelecimento_id'], ['estabelecimento.id'], ),
     sa.PrimaryKeyConstraint('id')

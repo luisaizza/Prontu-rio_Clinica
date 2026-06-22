@@ -26,7 +26,7 @@ def upgrade():
 
     with op.batch_alter_table('user', schema=None) as batch_op:
         batch_op.add_column(sa.Column('totp_secret', sa.String(length=32), nullable=True))
-        batch_op.add_column(sa.Column('totp_enabled', sa.Boolean(), server_default=sa.text('0'), nullable=False))
+        batch_op.add_column(sa.Column('totp_enabled', sa.Boolean(), server_default=sa.false(), nullable=False))
 
     # ### end Alembic commands ###
 

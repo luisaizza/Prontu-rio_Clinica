@@ -6,6 +6,9 @@ Werkzeug==3.0.1
 python-dotenv==1.0.1
 Pillow==10.4.0  # para processamento seguro de imagens (tem wheel pronta p/ Python 3.11+)
 Flask-WTF==1.2.1  # Adicionado para proteção CSRF
+Flask-Limiter==3.8.0  # Rate limiting em login e agendamento público
+pyotp==2.9.0  # 2FA (TOTP) opcional para login
+qrcode==7.4.2  # gera o QR code para configurar o 2FA
 email-validator==2.2.0 # Adicionado para validação de e-mail
 gunicorn==22.0.0  # Servidor WSGI de produção (Render)
 psycopg2-binary==2.9.9  # Driver PostgreSQL (Render Postgres)

@@ -24,6 +24,19 @@
                         </div>
 
                         <div class="mb-3">
+                            <label for="comissao_percentual" class="form-label">Comissão (%)</label>
+                            {{ form.comissao_percentual(class="form-control", value=profissional.comissao_percentual if profissional.comissao_percentual is not none else '', step="0.1", min="0", max="100") }}
+                            <div class="form-text">Usada no relatório de faturamento. Deixe em branco se este profissional não recebe comissão.</div>
+                        </div>
+
+                        {% if unidades %}
+                        <div class="mb-3">
+                            <label for="unidade_id" class="form-label">Unidade</label>
+                            {{ form.unidade_id(class="form-select", id="unidade_id") }}
+                        </div>
+                        {% endif %}
+
+                        <div class="mb-3">
                             <label for="disponibilidade_status" class="form-label">Status de Disponibilidade</label>
                             <select class="form-select" id="disponibilidade_status" name="disponibilidade_status" value="{{ profissional.disponibilidade_status }}">
                                 <option value="disponível" {% if profissional.disponibilidade_status == 'disponível' %}selected{% endif %}>Disponível</option>

@@ -15,9 +15,10 @@
                     <thead class="table-light">
                         <tr>
                             <th>Data/Hora</th>
-                            <th>Admin</th>
+                            <th>Quem fez</th>
                             <th>Ação</th>
-                            <th>Usuário Alvo</th>
+                            <th>Alvo</th>
+                            <th>IP</th>
                             <th>Detalhes</th>
                         </tr>
                     </thead>
@@ -27,20 +28,27 @@
                             <td>{{ log.timestamp | datetimeformat }}</td>
                             <td>{{ log.username }}</td>
                             <td>
-                                <span class="badge 
-                                    {% if log.action == 'DELETE_USER' %}bg-danger
-                                    {% elif log.action == 'RESET_PASSWORD' %}bg-warning text-dark
+                                <span class="badge
+                                    {% if log.action == 'DELETE_USER' or log.action == 'DELETE_PACIENTE' %}bg-danger
+                                    {% elif log.action == 'RESET_PASSWORD' or log.action == 'UPDATE_CONSENTIMENTO_LGPD' %}bg-warning text-dark
+                                    {% elif log.action == 'VIEW_PACIENTE' %}bg-secondary
+                                    {% elif log.action.startswith('CREATE_') %}bg-success
+                                    {% elif log.action.startswith('UPDATE_') %}bg-primary
                                     {% else %}bg-info text-dark
                                     {% endif %}">
                                     {{ log.action.replace('_', ' ') }}
                                 </span>
                             </td>
-                            <td>{{ log.target_username }}</td>
+                            <td>
+                                {{ log.target_username or '—' }}
+                                {% if log.target_type %}<span class="text-muted small">({{ log.target_type }} #{{ log.target_id }})</span>{% endif %}
+                            </td>
+                            <td class="text-muted small">{{ log.ip_address or '—' }}</td>
                             <td>{{ log.details or 'N/A' }}</td>
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="5" class="text-center text-muted py-4">Nenhum log de auditoria encontrado.</td>
+                            <td colspan="6" class="text-center text-muted py-4">Nenhum log de auditoria encontrado.</td>
                         </tr>
                         {% endfor %}
                     </tbody>

@@ -26,4 +26,51 @@ services:
       - key: SUPER_ADMIN_USERNAME
         value: admin
       - key: SUPER_ADMIN_PASSWORD
-        value: Esqueci001
+        sync: false # defina manualmente no dashboard do Render — não commitar a senha real aqui
+
+  # As duas rotinas abaixo (`flask lembretes-diarios` / `flask lembretes-retorno`)
+  # já existem em app_clinica.py há um tempo, mas nada as disparava em produção
+  # até agora — ficavam só utilizáveis manualmente. Cron Jobs no Render podem não
+  # estar disponíveis no plano free da mesma forma que o Web Service; confirme o
+  # plano no dashboard ao aplicar este blueprint.
+  - type: cron
+    name: prontuario-clinica-lembretes-diarios
+    runtime: python
+    plan: free
+    schedule: "0 12 * * *" # 12:00 UTC (~09:00 horário de Brasília) todo dia
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "flask lembretes-diarios"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_APP
+        value: app_clinica.py
+      - key: DATABASE_URL
+        fromDatabase:
+          name: prontuario-clinica-db
+          property: connectionString
+
+  - type: cron
+    name: prontuario-clinica-lembretes-retorno
+    runtime: python
+    plan: free
+    schedule: "0 13 * * *" # 13:00 UTC (~10:00 horário de Brasília) todo dia
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "flask lembretes-retorno"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FLASK_ENV
+        value: production
+      - key: FLASK_APP
+        value: app_clinica.py
+      - key: DATABASE_URL
+        fromDatabase:
+          name: prontuario-clinica-db
+          property: connectionString

@@ -1,0 +1,24 @@
+{% extends "base_clinica.html" %}
+{% block title %}Tratamento de dados pessoais — {{ estabelecimento.nome }}{% endblock %}
+
+{% block content %}
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-7">
+            <div class="card shadow-sm">
+                <div class="card-body">
+                    <h4 class="mb-3"><i class="bi bi-shield-lock"></i> Tratamento dos seus dados pessoais</h4>
+                    <p>Ao agendar um horário em <strong>{{ estabelecimento.nome }}</strong>, você concorda que os dados informados neste formulário (nome, CPF, telefone, e-mail) e os dados de saúde eventualmente registrados durante o seu atendimento (anamnese, exame físico, evolução do tratamento, fotos) sejam tratados pela clínica para as seguintes finalidades:</p>
+                    <ul>
+                        <li>Confirmar, gerenciar e lembrar o seu agendamento;</li>
+                        <li>Registrar o seu histórico clínico e atendimentos, conforme exigido pela boa prática profissional;</li>
+                        <li>Contato sobre o andamento do seu tratamento.</li>
+                    </ul>
+                    <p>Seus dados não são vendidos nem compartilhados com terceiros para fins de marketing. Você pode, a qualquer momento, solicitar à clínica a correção, a exportação ou a exclusão dos seus dados, conforme a Lei Geral de Proteção de Dados (Lei nº 13.709/2018), entrando em contato diretamente com {{ estabelecimento.nome }}.</p>
+                    <p class="text-muted small mb-0">Este é um texto padrão de consentimento. Para fins legais, recomenda-se que cada clínica revise e adapte este texto com seu próprio responsável jurídico.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

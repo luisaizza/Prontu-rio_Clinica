@@ -24,6 +24,7 @@ class Config:
     # Segurança
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SECURE = False  # Sobrescrito em ProductionConfig
+    SESSION_COOKIE_SAMESITE = 'Lax'
     PERMANENT_SESSION_LIFETIME = timedelta(hours=1)
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-key-change-in-production")
 
@@ -64,6 +65,7 @@ class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = 'sqlite:///:memory:'
     WTF_CSRF_ENABLED = False
+    RATELIMIT_ENABLED = False
 
 
 config = {

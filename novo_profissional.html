@@ -32,6 +32,19 @@
                             {{ form.telefone_contato(class="form-control", id="telefone_contato", placeholder="(XX) XXXXX-XXXX") }}
                         </div>
 
+                        <div class="mb-3">
+                            <label for="comissao_percentual" class="form-label">Comissão (%)</label>
+                            {{ form.comissao_percentual(class="form-control", id="comissao_percentual", step="0.1", min="0", max="100") }}
+                            <div class="form-text">Usada no relatório de faturamento. Deixe em branco se este profissional não recebe comissão.</div>
+                        </div>
+
+                        {% if unidades %}
+                        <div class="mb-3">
+                            <label for="unidade_id" class="form-label">Unidade</label>
+                            {{ form.unidade_id(class="form-select", id="unidade_id") }}
+                        </div>
+                        {% endif %}
+
                         <div class="d-flex justify-content-end gap-2 mt-4">
                             <a href="{{ url_for('listar_profissionais') }}" class="btn btn-outline-secondary">Cancelar</a>
                             {{ form.submit(class="btn btn-primary") }}

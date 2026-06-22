@@ -1,0 +1,62 @@
+{% extends "base_clinica.html" %}
+{% block title %}Gerenciar Unidades{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-buildings"></i> Unidades</h2>
+    <a href="{{ url_for('nova_unidade') }}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> Nova Unidade
+    </a>
+</div>
+
+<p class="text-muted">Cadastre aqui se sua clínica tiver mais de um endereço. Com nenhuma unidade cadastrada, o sistema funciona normalmente como uma clínica de endereço único.</p>
+
+<div class="card">
+    <div class="table-responsive">
+        <table class="table table-hover table-striped mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Nome</th>
+                    <th>Endereço</th>
+                    <th>Telefone</th>
+                    <th>Status</th>
+                    <th class="text-end">Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for unidade in unidades %}
+                <tr>
+                    <td><strong>{{ unidade.nome }}</strong></td>
+                    <td>{{ unidade.endereco or 'Não informado' }}</td>
+                    <td>{{ unidade.telefone or 'Não informado' }}</td>
+                    <td>
+                        <span class="badge bg-{{ 'success' if unidade.ativo else 'secondary' }}">
+                            {{ 'Ativa' if unidade.ativo else 'Inativa' }}
+                        </span>
+                    </td>
+                    <td class="text-end">
+                        <div class="btn-group" role="group">
+                            <a href="{{ url_for('editar_unidade', unidade_id=unidade.id) }}" class="btn btn-sm btn-warning" title="Editar Unidade">
+                                <i class="bi bi-pencil-square"></i> Editar
+                            </a>
+                            <form action="{{ url_for('deletar_unidade', unidade_id=unidade.id) }}" method="POST" class="d-inline" onsubmit="return confirm('Tem certeza que deseja excluir a unidade {{ unidade.nome }}?');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                                <button type="submit" class="btn btn-sm btn-danger" title="Excluir Unidade">
+                                    <i class="bi bi-trash-fill"></i> Excluir
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="5" class="text-center text-muted">
+                        Nenhuma unidade cadastrada. <a href="{{ url_for('nova_unidade') }}">Cadastrar a primeira</a>.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

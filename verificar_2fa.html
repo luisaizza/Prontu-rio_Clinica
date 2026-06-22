@@ -1,0 +1,40 @@
+{% extends "base_clinica.html" %}
+
+{% block title %}Verificação em duas etapas{% endblock %}
+
+{% block content %}
+<div class="login-page">
+    <div class="container">
+        <div class="row justify-content-center align-items-center min-vh-100">
+            <div class="col-md-6 col-lg-5 col-xl-4">
+                <div class="login-container">
+                    <div class="text-center mb-4">
+                        <i class="bi bi-shield-lock display-4 text-primary"></i>
+                        <h2 class="fw-bold text-primary mb-2 mt-2">Verificação em duas etapas</h2>
+                        <p class="text-muted">Digite o código de 6 dígitos do seu app autenticador.</p>
+                    </div>
+
+                    <form method="POST" action="{{ url_for('verificar_2fa') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+
+                        <div class="form-floating mb-4">
+                            <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" class="form-control text-center" id="codigo" name="codigo" placeholder="000000" autofocus required>
+                            <label for="codigo">Código</label>
+                        </div>
+
+                        <div class="d-grid mb-3">
+                            <button type="submit" class="btn btn-primary btn-lg">
+                                <i class="bi bi-check-circle me-2"></i>Verificar
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="text-center">
+                        <a href="{{ url_for('login') }}" class="text-decoration-none small">Voltar ao login</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

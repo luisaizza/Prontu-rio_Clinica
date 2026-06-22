@@ -40,6 +40,45 @@
                         </button>
                     </div>
                 </form>
+
+                <hr>
+
+                <h5 class="mt-4">Verificação em duas etapas (2FA)</h5>
+                {% if current_user.totp_enabled %}
+                <p class="text-success"><i class="bi bi-shield-check"></i> Ativada — um código do seu app autenticador é exigido a cada login.</p>
+                <form method="POST" action="{{ url_for('desativar_2fa') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    <button type="submit" class="btn btn-outline-danger">Desativar 2FA</button>
+                </form>
+                {% else %}
+                <p class="text-muted">Adicione uma camada extra de segurança: além da senha, peça um código do seu celular a cada login.</p>
+                <a href="{{ url_for('iniciar_2fa') }}" class="btn btn-outline-primary">
+                    <i class="bi bi-shield-lock"></i> Ativar 2FA
+                </a>
+                {% endif %}
+
+                <hr>
+
+                <h5 class="mt-4">Token de API</h5>
+                <p class="text-muted">Para integrações externas (ver <code>API.md</code> no projeto). O token dá acesso aos dados desta clínica nas permissões do seu usuário.</p>
+                {% if current_user.api_token %}
+                <p class="text-success"><i class="bi bi-key-fill"></i> Token ativo (não exibido por segurança — gere um novo se precisar vê-lo de novo).</p>
+                <div class="d-flex gap-2">
+                    <form method="POST" action="{{ url_for('gerar_api_token') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <button type="submit" class="btn btn-outline-secondary">Gerar Novo Token</button>
+                    </form>
+                    <form method="POST" action="{{ url_for('revogar_api_token') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                        <button type="submit" class="btn btn-outline-danger">Revogar Token</button>
+                    </form>
+                </div>
+                {% else %}
+                <form method="POST" action="{{ url_for('gerar_api_token') }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+                    <button type="submit" class="btn btn-outline-primary"><i class="bi bi-key"></i> Gerar Token de API</button>
+                </form>
+                {% endif %}
             </div>
         </div>
     </div>

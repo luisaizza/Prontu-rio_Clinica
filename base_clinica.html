@@ -14,6 +14,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Custom CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- PWA -->
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <meta name="theme-color" content="{{ estabelecimento_atual.cor_primaria if estabelecimento_atual and estabelecimento_atual.cor_primaria else '#9c27b0' }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
     {% if estabelecimento_atual and (estabelecimento_atual.cor_primaria or estabelecimento_atual.cor_acento) %}
     <style>
         :root {
@@ -85,8 +89,14 @@
                     <a href="{{ url_for('listar_profissionais') }}" class="sidebar-link {% if request.endpoint == 'listar_profissionais' %}active{% endif %}">
                         <i class="bi bi-person-workspace"></i><span>Profissionais</span>
                     </a>
+                    <a href="{{ url_for('listar_unidades') }}" class="sidebar-link {% if request.endpoint in ['listar_unidades', 'nova_unidade', 'editar_unidade'] %}active{% endif %}">
+                        <i class="bi bi-buildings"></i><span>Unidades</span>
+                    </a>
                     <a href="{{ url_for('gerenciar_usuarios') }}" class="sidebar-link {% if request.endpoint == 'gerenciar_usuarios' %}active{% endif %}">
                         <i class="bi bi-people-fill"></i><span>Usuários</span>
+                    </a>
+                    <a href="{{ url_for('relatorios') }}" class="sidebar-link {% if request.endpoint == 'relatorios' %}active{% endif %}">
+                        <i class="bi bi-graph-up"></i><span>Relatórios</span>
                     </a>
                 </div>
 
@@ -257,6 +267,15 @@
 
             loadTheme();
         });
+    </script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').catch(() => {
+                    // Falha silenciosa: o app continua funcionando normalmente sem PWA/offline.
+                });
+            });
+        }
     </script>
 </body>
 </html>

@@ -50,6 +50,13 @@
                             {{ form.historico_medico(class="form-control", rows="4", placeholder="Alergias, condições pré-existentes, etc.") }}
                         </div>
 
+                        <div class="form-check mb-3">
+                            {{ form.consentimento_lgpd(class="form-check-input") }}
+                            <label for="consentimento_lgpd" class="form-check-label">
+                                {{ form.consentimento_lgpd.label.text }} — marque se o paciente já assinou/concedeu o consentimento (presencialmente ou em papel). Pode ser registrado depois, na tela de edição do paciente.
+                            </label>
+                        </div>
+
                         <div class="d-flex justify-content-end gap-2 mt-4">
                             <a href="{{ url_for('home') }}" class="btn btn-outline-secondary">Cancelar</a>
                             {{ form.submit(class="btn btn-primary") }}

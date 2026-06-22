@@ -21,9 +21,19 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.utils import secure_filename
 from flask_wtf.csrf import CSRFProtect
 from flask_wtf import FlaskForm
-from sqlalchemy import func, extract, event
-from sqlalchemy.orm import declared_attr, with_loader_criteria, Session
-from wtforms import StringField, PasswordField, SubmitField, SelectField, DateField, TimeField, TextAreaField, validators, ValidationError
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
+from PIL import Image, UnidentifiedImageError
+import pyotp
+import qrcode
+import io
+import base64
+import secrets
+from flask import g
+from sqlalchemy import func, extract, event, or_
+from sqlalchemy.orm import declared_attr, with_loader_criteria, Session, joinedload
+from wtforms import StringField, PasswordField, SubmitField, SelectField, DateField, TimeField, TextAreaField, BooleanField, FloatField, validators, ValidationError
 
 from config import config, validar_configuracao_producao
 
@@ -46,6 +56,17 @@ validar_configuracao_producao(ENV_NAME)
 app.config.from_object(config[ENV_NAME])
 
 csrf = CSRFProtect(app)
+
+# Render entrega a request através de um único proxy de borda; sem isso,
+# request.remote_addr (usado pelo rate limiter abaixo) veria sempre o IP
+# interno do proxy, e não o IP real de cada visitante.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+# Rate limiting em memória — adequado porque o app roda com 1 worker gunicorn
+# (ver render.yaml). Se o número de workers/instâncias for aumentado, isso
+# precisa migrar para um storage compartilhado (ex: Redis), senão cada
+# worker passa a contar as tentativas separadamente.
+limiter = Limiter(get_remote_address, app=app, storage_uri="memory://", default_limits=[])
 
 # Quando empacotado com PyInstaller (app desktop), os caminhos relativos do
 # config.py apontam para o diretório temporário de extração, não para onde o
@@ -75,6 +96,20 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 def allowed_file(filename):
     """Verifica se o arquivo tem extensão permitida"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
+
+
+def arquivo_e_imagem_valida(file_storage):
+    """Confirma que o CONTEÚDO do arquivo é realmente uma imagem decodificável,
+    não só a extensão (`allowed_file` checa apenas o nome — um .exe renomeado
+    para .png passaria por ela). Reseta o cursor do arquivo depois de inspecionar,
+    senão o .save() subsequente gravaria um arquivo vazio/truncado."""
+    try:
+        Image.open(file_storage).verify()
+        return True
+    except (UnidentifiedImageError, OSError):
+        return False
+    finally:
+        file_storage.stream.seek(0)
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
@@ -357,6 +392,14 @@ class User(TenantMixin, UserMixin, db.Model):
     # estabelecimento_id dele aponta para um Estabelecimento "âncora" só para
     # satisfazer a FK do TenantMixin — não é usado para isolar dados dele.
     eh_super_admin = db.Column(db.Boolean, default=False, nullable=False, server_default=db.false())
+    # 2FA (TOTP) opcional, ativado pelo próprio usuário em /perfil. totp_secret só
+    # é gravado depois que o usuário confirma um código válido gerado a partir
+    # dele (ver fluxo de ativação) — nunca fica "ativado" sem essa confirmação.
+    totp_secret = db.Column(db.String(32), nullable=True)
+    totp_enabled = db.Column(db.Boolean, default=False, nullable=False, server_default=db.false())
+    # Token da API pública (/api/v1/*) — gerado sob demanda pelo próprio usuário
+    # em /perfil. Sem token, sem acesso; revogar é só apagar e gerar outro.
+    api_token = db.Column(db.String(64), unique=True, nullable=True)
     estabelecimento = db.relationship('Estabelecimento', backref='usuarios')
 
     def tem_permissao(self, permissao):
@@ -383,6 +426,23 @@ class Paciente(TenantMixin, db.Model):
     email = db.Column(db.String(120))
     historico_medico = db.Column(db.Text)
     data_cadastro = db.Column(db.DateTime, default=datetime.utcnow)
+    # Consentimento LGPD para tratamento de dados pessoais/saúde. `consentimento_lgpd`
+    # reflete o estado atual (pode ser revogado), enquanto `data_consentimento_lgpd`
+    # guarda a data do último consentimento DADO (não é limpa ao revogar, para manter
+    # o histórico de quando o paciente concordou antes de retirar o consentimento).
+    consentimento_lgpd = db.Column(db.Boolean, default=False, nullable=False)
+    data_consentimento_lgpd = db.Column(db.DateTime, nullable=True)
+    ip_consentimento_lgpd = db.Column(db.String(45), nullable=True)
+    # Assinatura eletrônica "simples" (Lei 14.063/2020) do consentimento — um
+    # desenho capturado num canvas, não uma assinatura digital com certificado
+    # ICP-Brasil. Guarda o PNG em base64 do traço mais recente; não é exigida
+    # para dar consentimento (o checkbox já basta), é um reforço opcional.
+    assinatura_consentimento = db.Column(db.Text, nullable=True)
+    # Soft delete: "excluir" um paciente marca esta data em vez de remover a
+    # linha, para não perder de vez um prontuário (LGPD ainda exige retenção
+    # em vários cenários, e exclusão física impediria qualquer auditoria
+    # posterior). Fica de fora das listagens normais, mas pode ser restaurado.
+    excluido_em = db.Column(db.DateTime, nullable=True)
     atendimentos = db.relationship('Atendimento', backref='paciente', lazy=True, cascade="all, delete-orphan")
     anamneses = db.relationship('Anamnese', backref='paciente', lazy=True, cascade="all, delete-orphan")
     exames_fisicos = db.relationship('ExameFisico', backref='paciente', lazy=True, cascade="all, delete-orphan")
@@ -444,6 +504,21 @@ class ProcedimentoAtendimento(db.Model):
 
 # --- MODELOS PARA AGENDA ESTÉTICA ---
 
+class Unidade(TenantMixin, db.Model):
+    """Unidade física opcional dentro de um estabelecimento (clínica com mais de
+    um endereço). A grande maioria das clínicas usa só uma unidade — por isso
+    nada aqui é obrigatório: profissional e agendamento têm `unidade_id`
+    *nullable*, e a interface só mostra seletor de unidade quando existe pelo
+    menos uma cadastrada."""
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(150), nullable=False)
+    endereco = db.Column(db.String(300))
+    telefone = db.Column(db.String(20))
+    ativo = db.Column(db.Boolean, default=True, nullable=False, server_default=db.true())
+
+    def __repr__(self):
+        return f'<Unidade {self.nome}>'
+
 class ServicoEstetico(TenantMixin, db.Model):
     """Modelo para Serviços/Tratamentos Estéticos oferecidos"""
     id = db.Column(db.Integer, primary_key=True)
@@ -474,7 +549,13 @@ class ProfissionalEstetico(TenantMixin, db.Model):
     disponibilidade_status = db.Column(db.String(50), default='disponível')  # disponível, indisponível, de_ferias
     data_inicio_ferias = db.Column(db.Date)
     data_fim_ferias = db.Column(db.Date)
+    # % do valor do serviço pago como comissão a este profissional. Nulo/0 = sem
+    # comissão configurada (o relatório de faturamento simplesmente não calcula
+    # comissão para ele até alguém preencher este campo).
+    comissao_percentual = db.Column(db.Float, nullable=True)
+    unidade_id = db.Column(db.Integer, db.ForeignKey('unidade.id'), nullable=True)
     usuario = db.relationship('User', backref='perfil_profissional')
+    unidade = db.relationship('Unidade')
     horarios_disponíveis = db.relationship('HorarioAtendimento', backref='profissional', lazy=True, cascade="all, delete-orphan")
     agendamentos = db.relationship('AgendamentoServico', backref='profissional', lazy=True)
 
@@ -562,17 +643,46 @@ class AgendamentoServico(TenantMixin, db.Model):
         return int(delta.total_seconds() / 60)
 
 class AuditLog(TenantMixin, db.Model):
-    """Modelo para registrar logs de auditoria de ações importantes."""
+    """Modelo para registrar logs de auditoria de ações importantes.
+
+    `target_user_id`/`target_username` são os campos originais, usados só por
+    ações sobre conta de usuário (DELETE_USER, RESET_PASSWORD, CHANGE_PROFILE).
+    `target_type`/`target_id` são genéricos e usados pelas ações novas sobre
+    dados clínicos (paciente, anamnese, exame físico, atendimento) — `target_username`
+    é reaproveitado nesses casos como rótulo legível do alvo (ex: nome do paciente),
+    não literalmente um username.
+    """
     id = db.Column(db.Integer, primary_key=True)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id')) # ID do admin que fez a ação
     username = db.Column(db.String(80)) # Nome do admin
     action = db.Column(db.String(100), nullable=False) # Ex: 'DELETE_USER', 'RESET_PASSWORD'
-    target_user_id = db.Column(db.Integer) # ID do usuário afetado
-    target_username = db.Column(db.String(80)) # Nome do usuário afetado
+    target_user_id = db.Column(db.Integer) # ID do usuário afetado (ações de usuário)
+    target_username = db.Column(db.String(80)) # Nome do usuário afetado, ou rótulo do alvo
+    target_type = db.Column(db.String(50)) # 'paciente', 'anamnese', 'exame_fisico', 'atendimento'...
+    target_id = db.Column(db.Integer) # id do registro afetado, qualquer que seja o tipo
+    ip_address = db.Column(db.String(45))
     details = db.Column(db.Text) # Detalhes adicionais
 
     user = db.relationship('User', foreign_keys=[user_id])
+
+
+def registrar_auditoria(action, target_type=None, target_id=None, target_username=None, details=None):
+    """Adiciona uma entrada de auditoria para a ação atual do usuário logado.
+
+    Não comita — quem chama decide quando persistir (geralmente junto com a
+    mudança que está sendo auditada, ou isoladamente em ações só de leitura).
+    """
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        username=current_user.username,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        target_username=target_username,
+        ip_address=request.remote_addr,
+        details=details,
+    ))
 
 
 def obter_estabelecimento_ativo():
@@ -668,6 +778,15 @@ def healthz():
     """Usado pelo health check do Render para liberar deploys sem downtime."""
     return {"status": "ok"}, 200
 
+@app.route("/sw.js")
+def service_worker():
+    """Serve o service worker na raiz (não em /static/) para que o escopo cubra
+    o app inteiro — por padrão o navegador limita o escopo à pasta do arquivo."""
+    response = app.send_static_file('sw.js')
+    response.headers['Content-Type'] = 'application/javascript'
+    response.headers['Service-Worker-Allowed'] = '/'
+    return response
+
 # --- GERENCIADOR DE ERROS ---
 
 @app.errorhandler(404)
@@ -697,6 +816,7 @@ class LoginForm(FlaskForm):
     password = PasswordField('Senha')
     submit = SubmitField('Entrar')
 @app.route("/login", methods=["GET", "POST"])
+@limiter.limit("15 per minute")
 def login():
     if request.method == "POST":
         username = request.form.get("username")
@@ -704,6 +824,11 @@ def login():
         user = User.query.filter_by(username=username).first()
 
         if user and check_password_hash(user.password_hash, password):
+            if user.totp_enabled:
+                # Login fica pendente até o segundo fator — não chama login_user()
+                # ainda. A sessão guarda só o id, não autentica nada por si só.
+                session['2fa_user_id'] = user.id
+                return redirect(url_for("verificar_2fa"))
             login_user(user)
             return redirect(url_for("home"))
         else:
@@ -712,6 +837,28 @@ def login():
 
     form = LoginForm() # Cria uma instância do formulário
     return render_template("login_clinica.html", form=form)
+
+@app.route("/login/verificar-2fa", methods=["GET", "POST"])
+@limiter.limit("15 per minute")
+def verificar_2fa():
+    """Segundo fator do login: código TOTP de 6 dígitos do app autenticador."""
+    user_id = session.get('2fa_user_id')
+    if not user_id:
+        return redirect(url_for("login"))
+    user = db.session.get(User, user_id)
+    if not user or not user.totp_enabled:
+        session.pop('2fa_user_id', None)
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        codigo = (request.form.get("codigo") or "").strip()
+        if pyotp.TOTP(user.totp_secret).verify(codigo, valid_window=1):
+            session.pop('2fa_user_id', None)
+            login_user(user)
+            return redirect(url_for("home"))
+        flash("Código inválido. Tente novamente.", "danger")
+
+    return render_template("verificar_2fa.html")
 
 class RegistroForm(FlaskForm):
     """Formulário de registro."""
@@ -735,13 +882,24 @@ class ProfissionalForm(FlaskForm):
     usuario_id = SelectField('Usuário', coerce=int, validators=[validators.DataRequired()])
     especialidades = StringField('Especialidades')
     telefone_contato = StringField('Telefone de Contato')
+    comissao_percentual = FloatField('Comissão (%)', validators=[validators.Optional()])
+    unidade_id = SelectField('Unidade', coerce=int, validators=[validators.Optional()])
     submit = SubmitField('Salvar Profissional')
 
 class EditarProfissionalForm(FlaskForm):
     """Formulário para editar um perfil profissional existente."""
     especialidades = StringField('Especialidades')
     telefone_contato = StringField('Telefone de Contato')
+    comissao_percentual = FloatField('Comissão (%)', validators=[validators.Optional()])
+    unidade_id = SelectField('Unidade', coerce=int, validators=[validators.Optional()])
     submit = SubmitField('Salvar Alterações')
+
+class UnidadeForm(FlaskForm):
+    """Formulário para criar/editar uma unidade física da clínica."""
+    nome = StringField('Nome da Unidade', validators=[validators.DataRequired()])
+    endereco = StringField('Endereço')
+    telefone = StringField('Telefone')
+    submit = SubmitField('Salvar Unidade')
 
 class PacienteForm(FlaskForm):
     """Formulário para criar/editar um paciente."""
@@ -751,6 +909,7 @@ class PacienteForm(FlaskForm):
     telefone = StringField('Telefone')
     email = StringField('E-mail', validators=[validators.Optional(), validators.Email()])
     historico_medico = TextAreaField('Histórico Médico')
+    consentimento_lgpd = BooleanField('Paciente concordou com o tratamento de dados (LGPD)')
     submit = SubmitField('Salvar Paciente')
 
     def validate_cpf(self, field):
@@ -875,6 +1034,21 @@ def gerenciar_usuarios():
     usuarios = User.query.all()
     return render_template("gerenciar_usuarios.html", usuarios=usuarios)
 
+def eh_ultimo_admin(usuario):
+    """True se `usuario` for o único admin do estabelecimento dele — alterar o
+    perfil dessa conta para algo diferente de 'admin', ou excluí-la, deixaria a
+    clínica sem nenhum administrador. Substitui a checagem antiga, que protegia
+    só um username fixo ('luisaizza') e não valia para as demais clínicas."""
+    if usuario.perfil != 'admin':
+        return False
+    outro_admin = User.query.filter(
+        User.estabelecimento_id == usuario.estabelecimento_id,
+        User.perfil == 'admin',
+        User.id != usuario.id,
+    ).first()
+    return outro_admin is None
+
+
 @app.route("/usuarios/<int:usuario_id>/alterar-perfil/<perfil>", methods=["POST"])
 @login_required
 @requer_permissao('gerenciar_usuarios')
@@ -889,8 +1063,8 @@ def alterar_perfil_usuario(usuario_id, perfil):
         flash("Você não pode alterar seu próprio perfil.", "warning")
         return redirect(url_for("gerenciar_usuarios"))
     
-    if usuario.username == 'luisaizza':
-        flash("Não é permitido alterar o perfil do administrador principal.", "danger")
+    if perfil != 'admin' and eh_ultimo_admin(usuario):
+        flash("Não é possível remover o perfil de administrador: esta é a única conta admin desta clínica.", "danger")
         return redirect(url_for("gerenciar_usuarios"))
         
     if perfil not in ['admin', 'secretaria', 'esteta']:
@@ -926,8 +1100,8 @@ def deletar_usuario(usuario_id):
         flash("Você não pode deletar sua própria conta.", "warning")
         return redirect(url_for("gerenciar_usuarios"))
     
-    if usuario.username == 'luisaizza':
-        flash("Não é permitido deletar o administrador principal.", "danger")
+    if eh_ultimo_admin(usuario):
+        flash("Não é possível excluir: esta é a única conta admin desta clínica.", "danger")
         return redirect(url_for("gerenciar_usuarios"))
         
     # CORREÇÃO: Deletar o perfil profissional associado antes de deletar o usuário
@@ -1079,6 +1253,7 @@ def agendar_publico_inicio(slug):
                            estabelecimento_atual=estabelecimento, servicos=servicos)
 
 @app.route("/agendar/<slug>/horario", methods=["GET", "POST"])
+@limiter.limit("30 per minute")
 def agendar_publico_horario(slug):
     """Segunda etapa: escolher profissional, dia/horário e informar os próprios dados."""
     estabelecimento = _resolver_estabelecimento_publico(slug)
@@ -1104,10 +1279,13 @@ def agendar_publico_horario(slug):
             cpf = (request.form.get("cpf") or "").strip()
             telefone = (request.form.get("telefone") or "").strip()
             email = (request.form.get("email") or "").strip()
+            aceite_lgpd = request.form.get("aceite_lgpd") == "on"
 
             erro = None
             if not all([profissional_id, data_str, hora_str, nome_completo, cpf, telefone]):
                 erro = "Preencha todos os campos obrigatórios."
+            elif not aceite_lgpd:
+                erro = "É necessário concordar com o tratamento dos seus dados para continuar."
             elif not is_cpf_valid(cpf):
                 erro = "CPF inválido. Verifique o número digitado."
 
@@ -1140,6 +1318,24 @@ def agendar_publico_horario(slug):
             else:
                 paciente.telefone = telefone or paciente.telefone
                 paciente.email = email or paciente.email
+                if paciente.excluido_em:
+                    # Paciente havia sido excluído (soft delete) e está agendando de
+                    # novo por conta própria — restaura automaticamente, já que isso
+                    # só pode acontecer se for de fato a mesma pessoa (mesmo CPF).
+                    paciente.excluido_em = None
+                    db.session.add(AuditLog(
+                        action='RESTORE_PACIENTE', target_type='paciente', target_id=paciente.id,
+                        target_username=paciente.nome_completo, username='(agendamento público)',
+                        ip_address=request.remote_addr, details='Restaurado automaticamente: paciente reagendou via link público.',
+                    ))
+            # Cada agendamento público é uma nova ocasião de consentimento — registra
+            # de novo mesmo se o paciente já existia, com o IP de quem está preenchendo.
+            paciente.consentimento_lgpd = True
+            paciente.data_consentimento_lgpd = datetime.utcnow()
+            paciente.ip_consentimento_lgpd = request.remote_addr
+            assinatura = request.form.get('assinatura_base64', '')
+            if assinatura.startswith('data:image/png;base64,'):
+                paciente.assinatura_consentimento = assinatura
             db.session.flush()
 
             novo_agendamento = AgendamentoServico(
@@ -1153,12 +1349,47 @@ def agendar_publico_horario(slug):
             db.session.add(novo_agendamento)
             db.session.commit()
 
+            if paciente.email:
+                profissional_nome = novo_agendamento.profissional.usuario.username.upper() if novo_agendamento.profissional and novo_agendamento.profissional.usuario else "—"
+                assunto = f"Confirmação de Agendamento - {estabelecimento.nome}"
+                corpo = f"""
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden;">
+                    <div style="background-color: #f8f9fa; padding: 20px; text-align: center; border-bottom: 1px solid #e0e0e0;">
+                        <img src="cid:logo_clinica" alt="Logo Clínica" style="max-height: 80px;">
+                    </div>
+                    <div style="padding: 30px; background-color: #ffffff;">
+                        <h2 style="color: #0d6efd; margin-top: 0; text-align: center;">Solicitação de Agendamento Recebida!</h2>
+                        <p style="color: #555; font-size: 16px;">Olá, <strong>{paciente.nome_completo}</strong>!</p>
+                        <p style="color: #555; font-size: 16px;">Recebemos sua solicitação de agendamento. Confira os detalhes abaixo — a clínica ainda vai confirmar o horário:</p>
+
+                        <div style="background-color: #f8f9fa; border-left: 4px solid #0d6efd; padding: 15px; margin: 20px 0;">
+                            <p style="margin: 5px 0; color: #333;"><strong>Serviço:</strong> {servico.nome_servico}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Data:</strong> {data_hora.strftime('%d/%m/%Y')}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Horário:</strong> {data_hora.strftime('%H:%M')}</p>
+                            <p style="margin: 5px 0; color: #333;"><strong>Profissional:</strong> {profissional_nome}</p>
+                        </div>
+
+                        <p style="color: #555; font-size: 14px; text-align: center;">Caso precise reagendar ou cancelar, entre em contato com a clínica.</p>
+                    </div>
+                    <div style="background-color: #f8f9fa; padding: 15px; text-align: center; color: #888; font-size: 12px; border-top: 1px solid #e0e0e0;">
+                        <p style="margin: 0;">&copy; {datetime.now().year} {estabelecimento.nome}. Todos os direitos reservados.</p>
+                    </div>
+                </div>
+                """
+                enviar_email(estabelecimento, paciente.email, assunto, corpo)
+
             logger.info(f"Agendamento público criado: {paciente.nome_completo} - {servico.nome_servico} em {data_hora} (estabelecimento {estabelecimento.id})")
             return redirect(url_for("agendar_publico_sucesso", slug=slug))
 
         return render_template("agendar_publico_horario.html",
                                estabelecimento=estabelecimento, estabelecimento_atual=estabelecimento,
                                servico=servico, profissionais=profissionais, now=datetime.now())
+
+@app.route("/agendar/<slug>/privacidade")
+def agendar_publico_privacidade(slug):
+    """Texto de consentimento LGPD mostrado no link do checkbox do agendamento público."""
+    estabelecimento = _resolver_estabelecimento_publico(slug)
+    return render_template("termo_privacidade.html", estabelecimento=estabelecimento)
 
 @app.route("/agendar/<slug>/sucesso")
 def agendar_publico_sucesso(slug):
@@ -1230,7 +1461,7 @@ def admin_plataforma():
         for estabelecimento in estabelecimentos:
             contagens[estabelecimento.id] = {
                 'usuarios': User.query.filter_by(estabelecimento_id=estabelecimento.id).count(),
-                'pacientes': Paciente.query.filter_by(estabelecimento_id=estabelecimento.id).count(),
+                'pacientes': Paciente.query.filter_by(estabelecimento_id=estabelecimento.id, excluido_em=None).count(),
             }
     estabelecimento_atual_id = session.get('super_admin_estabelecimento_id')
     return render_template(
@@ -1296,6 +1527,75 @@ def perfil():
         return redirect(url_for('perfil'))
 
     return render_template("perfil_usuario.html")
+
+@app.route("/perfil/2fa/iniciar")
+@login_required
+def iniciar_2fa():
+    """Gera um novo segredo TOTP (ainda não salvo no usuário) e mostra o QR code
+    para o usuário escanear com um app autenticador antes de confirmar."""
+    secret = pyotp.random_base32()
+    session['2fa_setup_secret'] = secret
+
+    uri = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.username, issuer_name="Prontuário Clínica")
+    img = qrcode.make(uri)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    qr_base64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+
+    return render_template("configurar_2fa.html", qr_base64=qr_base64, secret=secret)
+
+@app.route("/perfil/2fa/confirmar", methods=["POST"])
+@login_required
+def confirmar_2fa():
+    """Só ativa o 2FA depois que o usuário prova, com um código válido, que
+    configurou o app autenticador corretamente."""
+    secret = session.get('2fa_setup_secret')
+    codigo = (request.form.get("codigo") or "").strip()
+    if not secret:
+        flash("Sessão de configuração expirada. Comece de novo.", "danger")
+        return redirect(url_for('perfil'))
+
+    if not pyotp.TOTP(secret).verify(codigo, valid_window=1):
+        flash("Código inválido. Verifique o app autenticador e tente novamente.", "danger")
+        return redirect(url_for('iniciar_2fa'))
+
+    current_user.totp_secret = secret
+    current_user.totp_enabled = True
+    session.pop('2fa_setup_secret', None)
+    registrar_auditoria('ENABLE_2FA', target_type='user', target_id=current_user.id, target_username=current_user.username)
+    db.session.commit()
+    flash("Verificação em duas etapas ativada com sucesso!", "success")
+    return redirect(url_for('perfil'))
+
+@app.route("/perfil/2fa/desativar", methods=["POST"])
+@login_required
+def desativar_2fa():
+    current_user.totp_enabled = False
+    current_user.totp_secret = None
+    registrar_auditoria('DISABLE_2FA', target_type='user', target_id=current_user.id, target_username=current_user.username)
+    db.session.commit()
+    flash("Verificação em duas etapas desativada.", "success")
+    return redirect(url_for('perfil'))
+
+@app.route("/perfil/api-token/gerar", methods=["POST"])
+@login_required
+def gerar_api_token():
+    novo_token = secrets.token_hex(32)
+    current_user.api_token = novo_token
+    registrar_auditoria('GENERATE_API_TOKEN', target_type='user', target_id=current_user.id, target_username=current_user.username)
+    db.session.commit()
+    flash(f"Token gerado: {novo_token} — copie agora, ele não será mostrado de novo (gere um novo se perder).", "success")
+    return redirect(url_for('perfil'))
+
+@app.route("/perfil/api-token/revogar", methods=["POST"])
+@login_required
+def revogar_api_token():
+    current_user.api_token = None
+    registrar_auditoria('REVOKE_API_TOKEN', target_type='user', target_id=current_user.id, target_username=current_user.username)
+    db.session.commit()
+    flash("Token de API revogado.", "success")
+    return redirect(url_for('perfil'))
+
 # --- ROTAS DA APLICAÇÃO ---
 
 def buscar_proximos_horarios_livres(limite=5):
@@ -1431,11 +1731,11 @@ def home():
 
     # Para outros perfis, mostra a lista de pacientes
     query = request.args.get('q', '') # Pega o termo de busca da URL
+    pacientes_query = Paciente.query.filter(Paciente.excluido_em.is_(None))
     if query:
-        pacientes = Paciente.query.filter(Paciente.nome_completo.ilike(f'%{query}%')).order_by(Paciente.nome_completo).all()
-    else:
-        pacientes = Paciente.query.order_by(Paciente.nome_completo).all()
-    
+        pacientes_query = pacientes_query.filter(Paciente.nome_completo.ilike(f'%{query}%'))
+    pacientes = pacientes_query.order_by(Paciente.nome_completo).all()
+
     return render_template("home_clinica.html", pacientes=pacientes, query=query)
 
 @app.route("/pacientes")
@@ -1444,11 +1744,14 @@ def home():
 def home_pacientes():
     """Página dedicada para o admin gerenciar todos os pacientes."""
     query = request.args.get('q', '')
+    mostrar_excluidos = request.args.get('excluidos') == '1'
+    pacientes_query = Paciente.query
+    pacientes_query = pacientes_query.filter(Paciente.excluido_em.isnot(None)) if mostrar_excluidos \
+        else pacientes_query.filter(Paciente.excluido_em.is_(None))
     if query:
-        pacientes = Paciente.query.filter(Paciente.nome_completo.ilike(f'%{query}%')).order_by(Paciente.nome_completo).all()
-    else:
-        pacientes = Paciente.query.order_by(Paciente.nome_completo).all()
-    return render_template("home_clinica.html", pacientes=pacientes, query=query)
+        pacientes_query = pacientes_query.filter(Paciente.nome_completo.ilike(f'%{query}%'))
+    pacientes = pacientes_query.order_by(Paciente.nome_completo).all()
+    return render_template("home_clinica.html", pacientes=pacientes, query=query, mostrar_excluidos=mostrar_excluidos)
 
 @app.route("/pacientes/novo", methods=["GET", "POST"])
 @login_required
@@ -1462,7 +1765,11 @@ def novo_paciente():
         if cpf:
             paciente_existente = Paciente.query.filter_by(cpf=cpf).first()
             if paciente_existente:
-                flash("Este CPF já está cadastrado no sistema.", "danger")
+                if paciente_existente.excluido_em:
+                    flash(f"Este CPF pertence a um paciente excluído ('{paciente_existente.nome_completo}'). "
+                          f"Restaure o cadastro em Pacientes → Ver excluídos, em vez de criar um novo.", "danger")
+                else:
+                    flash("Este CPF já está cadastrado no sistema.", "danger")
                 return render_template("novo_paciente.html", form=form)
 
         novo = Paciente(
@@ -1471,9 +1778,14 @@ def novo_paciente():
             data_nascimento=form.data_nascimento.data,
             telefone=form.telefone.data,
             email=form.email.data,
-            historico_medico=form.historico_medico.data
+            historico_medico=form.historico_medico.data,
+            consentimento_lgpd=form.consentimento_lgpd.data,
+            data_consentimento_lgpd=datetime.utcnow() if form.consentimento_lgpd.data else None,
+            ip_consentimento_lgpd=request.remote_addr if form.consentimento_lgpd.data else None,
         )
         db.session.add(novo)
+        db.session.flush()
+        registrar_auditoria('CREATE_PACIENTE', target_type='paciente', target_id=novo.id, target_username=novo.nome_completo)
         db.session.commit()
         flash("Paciente cadastrado com sucesso!", "success")
         
@@ -1515,6 +1827,19 @@ def editar_paciente(paciente_id):
         paciente.telefone = request.form.get("telefone")
         paciente.email = request.form.get("email")
         paciente.historico_medico = request.form.get("historico_medico")
+
+        consentimento_marcado = request.form.get("consentimento_lgpd") == "on"
+        if consentimento_marcado and not paciente.consentimento_lgpd:
+            paciente.data_consentimento_lgpd = datetime.utcnow()
+            paciente.ip_consentimento_lgpd = request.remote_addr
+            registrar_auditoria('UPDATE_CONSENTIMENTO_LGPD', target_type='paciente', target_id=paciente.id,
+                                 target_username=paciente.nome_completo, details="Consentimento concedido.")
+        elif not consentimento_marcado and paciente.consentimento_lgpd:
+            registrar_auditoria('UPDATE_CONSENTIMENTO_LGPD', target_type='paciente', target_id=paciente.id,
+                                 target_username=paciente.nome_completo, details="Consentimento revogado.")
+        paciente.consentimento_lgpd = consentimento_marcado
+
+        registrar_auditoria('UPDATE_PACIENTE', target_type='paciente', target_id=paciente.id, target_username=paciente.nome_completo)
         db.session.commit()
         flash("Dados do paciente atualizados com sucesso!", "success")
         return redirect(url_for("ver_paciente", paciente_id=paciente.id))
@@ -1524,12 +1849,28 @@ def editar_paciente(paciente_id):
 @app.route("/pacientes/<int:paciente_id>/deletar", methods=["POST"])
 @login_required
 def deletar_paciente(paciente_id):
+    """Exclusão "lógica": marca `excluido_em` em vez de remover a linha, para
+    preservar o prontuário (LGPD) e permitir restaurar por engano."""
     paciente = db.session.get(Paciente, paciente_id) # CORREÇÃO: Uso de db.session.get
     if paciente:
-        db.session.delete(paciente)
+        registrar_auditoria('DELETE_PACIENTE', target_type='paciente', target_id=paciente.id, target_username=paciente.nome_completo)
+        paciente.excluido_em = datetime.utcnow()
         db.session.commit()
         flash("Paciente excluído com sucesso.", "success")
     return redirect(url_for("home"))
+
+@app.route("/pacientes/<int:paciente_id>/restaurar", methods=["POST"])
+@login_required
+@requer_permissao('gerenciar_pacientes')
+def restaurar_paciente(paciente_id):
+    """Reverte a exclusão lógica de um paciente."""
+    paciente = db.session.get(Paciente, paciente_id)
+    if paciente:
+        registrar_auditoria('RESTORE_PACIENTE', target_type='paciente', target_id=paciente.id, target_username=paciente.nome_completo)
+        paciente.excluido_em = None
+        db.session.commit()
+        flash("Paciente restaurado com sucesso.", "success")
+    return redirect(url_for("home_pacientes", excluidos="1"))
 
 @app.route("/pacientes/<int:paciente_id>")
 @login_required
@@ -1546,7 +1887,86 @@ def ver_paciente(paciente_id):
         paciente_id=paciente_id
     ).order_by(Atendimento.data_atendimento.desc()).all()
 
+    registrar_auditoria('VIEW_PACIENTE', target_type='paciente', target_id=paciente.id, target_username=paciente.nome_completo)
+    db.session.commit()
+
     return render_template("ver_paciente.html", paciente=paciente, atendimentos=atendimentos, agendamentos_servicos=paciente.agendamentos_servicos)
+
+
+def _iso(valor):
+    return valor.isoformat() if valor else None
+
+
+@app.route("/pacientes/<int:paciente_id>/exportar")
+@login_required
+@requer_permissao('visualizar_pacientes')
+def exportar_dados_paciente(paciente_id):
+    """Exporta todos os dados do paciente em JSON — para a clínica atender um
+    pedido de portabilidade/acesso (LGPD Art. 18). Não é um portal do próprio
+    paciente: é a equipe da clínica gerando o arquivo para entregar a ele."""
+    paciente = db.session.get(Paciente, paciente_id)
+    if not paciente:
+        flash("Paciente não encontrado.", "danger")
+        return redirect(url_for("home"))
+
+    dados = {
+        "paciente": {
+            "nome_completo": paciente.nome_completo,
+            "cpf": paciente.cpf,
+            "data_nascimento": _iso(paciente.data_nascimento),
+            "telefone": paciente.telefone,
+            "email": paciente.email,
+            "historico_medico": paciente.historico_medico,
+            "data_cadastro": _iso(paciente.data_cadastro),
+            "consentimento_lgpd": paciente.consentimento_lgpd,
+            "data_consentimento_lgpd": _iso(paciente.data_consentimento_lgpd),
+        },
+        "anamneses": [{
+            "data": _iso(a.data_anamnese),
+            "queixa_principal": a.queixa_principal,
+            "historico_doenca_atual": a.historico_doenca_atual,
+            "historico_patologico_pregresso": a.historico_patologico_pregresso,
+            "historico_familiar": a.historico_familiar,
+            "habitos_vida": a.habitos_vida,
+            "medicamentos_uso": a.medicamentos_uso,
+            "alergias": a.alergias,
+        } for a in paciente.anamneses],
+        "exames_fisicos": [{
+            "data": _iso(e.data_exame),
+            "estado_geral": e.estado_geral,
+            "pele_mucosas": e.pele_mucosas,
+            "aparelho_respiratorio": e.aparelho_respiratorio,
+            "aparelho_cardiovascular": e.aparelho_cardiovascular,
+            "abdome": e.abdome,
+            "sistema_nervoso": e.sistema_nervoso,
+            "sistema_musculo_esqueletico": e.sistema_musculo_esqueletico,
+            "pressao_arterial": e.pressao_arterial,
+            "frequencia_cardiaca": e.frequencia_cardiaca,
+            "temperatura": e.temperatura,
+            "saturacao_o2": e.saturacao_o2,
+            "observacoes_gerais": e.observacoes_gerais,
+        } for e in paciente.exames_fisicos],
+        "atendimentos": [{
+            "data": _iso(at.data_atendimento),
+            "anotacoes": at.anotacoes,
+            "procedimentos": [p.nome_procedimento for p in at.procedimentos],
+        } for at in paciente.atendimentos],
+        "agendamentos": [{
+            "data": _iso(ag.data_agendamento),
+            "servico": ag.servico.nome_servico if ag.servico else None,
+            "profissional": ag.profissional.usuario.username if ag.profissional and ag.profissional.usuario else None,
+            "status": ag.status,
+            "avaliacao": ag.avaliacao,
+            "comentario_cliente": ag.comentario_cliente,
+        } for ag in paciente.agendamentos_servicos],
+    }
+
+    registrar_auditoria('EXPORT_PACIENTE', target_type='paciente', target_id=paciente.id, target_username=paciente.nome_completo)
+    db.session.commit()
+
+    response = jsonify(dados)
+    response.headers['Content-Disposition'] = f'attachment; filename="dados_paciente_{paciente.id}.json"'
+    return response
 
 @app.route("/pacientes/<int:paciente_id>/atendimento/novo", methods=["POST"])
 @login_required
@@ -1567,7 +1987,10 @@ def novo_atendimento(paciente_id):
             if not allowed_file(foto_antes_file.filename):
                 flash("Formato de arquivo não permitido para foto 'antes'. Use apenas .jpg, .jpeg ou .png", "warning")
                 return redirect(url_for("ver_paciente", paciente_id=paciente_id))
-            
+            if not arquivo_e_imagem_valida(foto_antes_file):
+                flash("O arquivo enviado para a foto 'antes' não é uma imagem válida.", "warning")
+                return redirect(url_for("ver_paciente", paciente_id=paciente_id))
+
             # Garante que a extensão seja preservada e o nome seja seguro
             ext = foto_antes_file.filename.rsplit('.', 1)[1].lower()
             name = secure_filename(foto_antes_file.filename.rsplit('.', 1)[0])
@@ -1581,7 +2004,10 @@ def novo_atendimento(paciente_id):
             if not allowed_file(foto_depois_file.filename):
                 flash("Formato de arquivo não permitido para foto 'depois'. Use apenas .jpg, .jpeg ou .png", "warning")
                 return redirect(url_for("ver_paciente", paciente_id=paciente_id))
-            
+            if not arquivo_e_imagem_valida(foto_depois_file):
+                flash("O arquivo enviado para a foto 'depois' não é uma imagem válida.", "warning")
+                return redirect(url_for("ver_paciente", paciente_id=paciente_id))
+
             ext = foto_depois_file.filename.rsplit('.', 1)[1].lower()
             name = secure_filename(foto_depois_file.filename.rsplit('.', 1)[0])
             if not name: name = "imagem"
@@ -1600,6 +2026,8 @@ def novo_atendimento(paciente_id):
         paciente_id=paciente_id
     )
     db.session.add(atendimento)
+    db.session.flush()
+    registrar_auditoria('CREATE_ATENDIMENTO', target_type='atendimento', target_id=atendimento.id, target_username=paciente.nome_completo)
     db.session.commit()
 
     # Lógica para múltiplos procedimentos
@@ -1659,6 +2087,8 @@ def nova_anamnese(paciente_id):
             paciente_id=paciente_id
         )
         db.session.add(nova)
+        db.session.flush()
+        registrar_auditoria('CREATE_ANAMNESE', target_type='anamnese', target_id=nova.id, target_username=paciente.nome_completo)
         db.session.commit()
         flash("Anamnese registrada com sucesso!", "success")
         return redirect(url_for("ver_paciente", paciente_id=paciente_id))
@@ -1692,6 +2122,8 @@ def novo_exame_fisico(paciente_id):
                 paciente_id=paciente_id
             )
             db.session.add(novo)
+            db.session.flush()
+            registrar_auditoria('CREATE_EXAME_FISICO', target_type='exame_fisico', target_id=novo.id, target_username=paciente.nome_completo)
             db.session.commit()
             flash("Exame físico registrado com sucesso!", "success")
             return redirect(url_for("ver_paciente", paciente_id=paciente_id))
@@ -1721,6 +2153,7 @@ def editar_anamnese(paciente_id, anamnese_id):
             anamnese.habitos_vida = request.form.get("habitos_vida")
             anamnese.medicamentos_uso = request.form.get("medicamentos_uso")
             anamnese.alergias = request.form.get("alergias")
+            registrar_auditoria('UPDATE_ANAMNESE', target_type='anamnese', target_id=anamnese.id, target_username=anamnese.paciente.nome_completo)
             db.session.commit()
             flash("Anamnese atualizada com sucesso!", "success")
             return redirect(url_for("ver_paciente", paciente_id=paciente_id))
@@ -1756,6 +2189,7 @@ def editar_exame_fisico(paciente_id, exame_id):
             exame.temperatura = request.form.get("temperatura")
             exame.saturacao_o2 = request.form.get("saturacao_o2")
             exame.observacoes_gerais = request.form.get("observacoes_gerais")
+            registrar_auditoria('UPDATE_EXAME_FISICO', target_type='exame_fisico', target_id=exame.id, target_username=exame.paciente.nome_completo)
             db.session.commit()
             flash("Exame físico atualizado com sucesso!", "success")
             return redirect(url_for("ver_paciente", paciente_id=paciente_id))
@@ -2427,10 +2861,12 @@ def novo_profissional():
     
     form = ProfissionalForm()
     form.usuario_id.choices = [(u.id, u.username) for u in usuarios_sem_perfil]
+    unidades = Unidade.query.filter_by(ativo=True).order_by(Unidade.nome).all()
+    form.unidade_id.choices = [(0, 'Nenhuma / Geral')] + [(u.id, u.nome) for u in unidades]
 
     if form.validate_on_submit():
         usuario_id = form.usuario_id.data
-        
+
         # Verifica se o usuário já tem um perfil profissional (dupla verificação)
         if ProfissionalEstetico.query.filter_by(usuario_id=usuario_id).first():
             flash("Este usuário já possui um perfil profissional cadastrado.", "danger")
@@ -2440,18 +2876,20 @@ def novo_profissional():
             usuario_id=usuario_id,
             especialidades=form.especialidades.data,
             telefone_contato=form.telefone_contato.data,
+            comissao_percentual=form.comissao_percentual.data,
+            unidade_id=form.unidade_id.data or None,
             disponibilidade_status='disponível'
         )
         db.session.add(novo_profissional)
         db.session.commit()
-        
+
         flash("Perfil profissional criado com sucesso!", "success")
         return redirect(url_for('listar_profissionais'))
     
     if not usuarios_sem_perfil:
         flash("Não há usuários com perfil 'esteta' disponíveis para criar um perfil profissional.", "info")
 
-    return render_template("novo_profissional.html", form=form)
+    return render_template("novo_profissional.html", form=form, unidades=unidades)
 
 @app.route("/admin/profissionais/<int:profissional_id>/editar", methods=["GET", "POST"])
 @login_required
@@ -2464,9 +2902,16 @@ def editar_profissional(profissional_id):
         flash("Profissional não encontrado.", "danger")
         return redirect(url_for('listar_profissionais'))
 
+    unidades = Unidade.query.filter_by(ativo=True).order_by(Unidade.nome).all()
+    form.unidade_id.choices = [(0, 'Nenhuma / Geral')] + [(u.id, u.nome) for u in unidades]
+    if request.method == "GET":
+        form.unidade_id.data = profissional.unidade_id or 0
+
     if form.validate_on_submit():
         profissional.especialidades = form.especialidades.data
         profissional.telefone_contato = form.telefone_contato.data
+        profissional.comissao_percentual = form.comissao_percentual.data
+        profissional.unidade_id = form.unidade_id.data or None
         profissional.disponibilidade_status = request.form.get("disponibilidade_status")
 
         if profissional.disponibilidade_status == 'de_ferias':
@@ -2494,7 +2939,7 @@ def editar_profissional(profissional_id):
             flash(f"Erro ao atualizar o profissional: {str(e)}", "danger")
             logger.error(f"Erro ao editar profissional ID {profissional_id}: {e}")
 
-    return render_template("editar_profissional.html", profissional=profissional, form=form)
+    return render_template("editar_profissional.html", profissional=profissional, form=form, unidades=unidades)
 
 @app.route("/admin/profissionais/<int:profissional_id>/deletar", methods=["POST"])
 @login_required
@@ -2518,6 +2963,68 @@ def deletar_profissional(profissional_id):
     flash(f"Perfil profissional de '{nome_profissional}' deletado com sucesso.", "success")
     logger.info(f"Perfil profissional de '{nome_profissional}' (ID: {profissional_id}) foi deletado por {current_user.username}.")
     return redirect(url_for('listar_profissionais'))
+
+# --- UNIDADES (multi-unidade opcional dentro do estabelecimento) ---
+
+@app.route("/admin/unidades")
+@login_required
+@requer_permissao('gerenciar_unidades')
+def listar_unidades():
+    unidades = Unidade.query.order_by(Unidade.nome).all()
+    return render_template("listar_unidades.html", unidades=unidades)
+
+@app.route("/admin/unidades/nova", methods=["GET", "POST"])
+@login_required
+@requer_permissao('gerenciar_unidades')
+def nova_unidade():
+    form = UnidadeForm()
+    if form.validate_on_submit():
+        unidade = Unidade(nome=form.nome.data, endereco=form.endereco.data, telefone=form.telefone.data)
+        db.session.add(unidade)
+        db.session.commit()
+        flash("Unidade criada com sucesso!", "success")
+        return redirect(url_for('listar_unidades'))
+    return render_template("nova_unidade.html", form=form)
+
+@app.route("/admin/unidades/<int:unidade_id>/editar", methods=["GET", "POST"])
+@login_required
+@requer_permissao('gerenciar_unidades')
+def editar_unidade(unidade_id):
+    unidade = db.session.get(Unidade, unidade_id)
+    if not unidade:
+        flash("Unidade não encontrada.", "danger")
+        return redirect(url_for('listar_unidades'))
+    form = UnidadeForm(obj=unidade)
+    if form.validate_on_submit():
+        unidade.nome = form.nome.data
+        unidade.endereco = form.endereco.data
+        unidade.telefone = form.telefone.data
+        unidade.ativo = request.form.get('ativo') == 'on'
+        db.session.commit()
+        flash("Unidade atualizada com sucesso!", "success")
+        return redirect(url_for('listar_unidades'))
+    if request.method == "GET":
+        form.nome.data = unidade.nome
+        form.endereco.data = unidade.endereco
+        form.telefone.data = unidade.telefone
+    return render_template("editar_unidade.html", form=form, unidade=unidade)
+
+@app.route("/admin/unidades/<int:unidade_id>/deletar", methods=["POST"])
+@login_required
+@requer_permissao('gerenciar_unidades')
+def deletar_unidade(unidade_id):
+    unidade = db.session.get(Unidade, unidade_id)
+    if not unidade:
+        flash("Unidade não encontrada.", "danger")
+        return redirect(url_for('listar_unidades'))
+    em_uso = ProfissionalEstetico.query.filter_by(unidade_id=unidade.id).first()
+    if em_uso:
+        flash("Não é possível excluir: há profissionais associados a esta unidade. Desative-a em vez disso.", "warning")
+        return redirect(url_for('listar_unidades'))
+    db.session.delete(unidade)
+    db.session.commit()
+    flash("Unidade excluída com sucesso.", "success")
+    return redirect(url_for('listar_unidades'))
 
 @app.route("/admin/auditoria")
 @login_required
@@ -2566,6 +3073,9 @@ def personalizar_tema():
             if not allowed_file(logo_file.filename):
                 flash("Formato de logo não permitido. Use apenas .jpg, .jpeg ou .png", "warning")
                 return redirect(url_for('personalizar_tema'))
+            if not arquivo_e_imagem_valida(logo_file):
+                flash("O arquivo enviado para a logo não é uma imagem válida.", "warning")
+                return redirect(url_for('personalizar_tema'))
             ext = logo_file.filename.rsplit('.', 1)[1].lower()
             logo_filename = f"{uuid.uuid4().hex}.{ext}"
             pasta_logos = os.path.join(app.config['UPLOAD_FOLDER'], 'logos')
@@ -2582,14 +3092,118 @@ def personalizar_tema():
 @app.route("/uploads/<filename>")
 @login_required
 def uploaded_file(filename):
-    """Serve os arquivos de imagem que foram upados."""
+    """Serve fotos de atendimento — só se o arquivo pertencer a um atendimento
+    do estabelecimento atual (o nome do arquivo é um UUID imprevisível, mas
+    isso por si só não é controle de acesso: se o nome vazar, qualquer usuário
+    autenticado de qualquer clínica conseguiria abrir o link)."""
+    pertence_ao_tenant = Atendimento.query.filter(
+        or_(Atendimento.foto_antes == filename, Atendimento.foto_depois == filename)
+    ).first()
+    if not pertence_ao_tenant:
+        abort(404)
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 @app.route("/uploads/logos/<filename>")
 @login_required
 def uploaded_logo(filename):
-    """Serve as logos de estabelecimentos."""
+    """Serve a logo de um estabelecimento — só a do estabelecimento atual."""
+    pertence_ao_tenant = Estabelecimento.query.filter_by(
+        id=current_estabelecimento_id.get(), logo_filename=filename
+    ).first()
+    if not pertence_ao_tenant:
+        abort(404)
     return send_from_directory(os.path.join(app.config["UPLOAD_FOLDER"], "logos"), filename)
+
+@app.route("/admin/relatorios")
+@login_required
+@requer_permissao('visualizar_relatorios')
+def relatorios():
+    """Relatório de faturamento/comissão (a partir do preço já cadastrado em cada
+    serviço — não há controle de pagamento/cobrança real) e indicadores simples
+    de ocupação (mix de status dos agendamentos) e retenção de pacientes."""
+    hoje = datetime.now().date()
+    try:
+        inicio = datetime.strptime(request.args.get('inicio', ''), '%Y-%m-%d').date()
+    except ValueError:
+        inicio = hoje.replace(day=1)
+    try:
+        fim = datetime.strptime(request.args.get('fim', ''), '%Y-%m-%d').date()
+    except ValueError:
+        fim = hoje
+
+    unidades = Unidade.query.filter_by(ativo=True).order_by(Unidade.nome).all()
+    unidade_filtro_id = request.args.get('unidade_id', type=int)
+
+    agendamentos_query = AgendamentoServico.query.options(
+        joinedload(AgendamentoServico.servico),
+        joinedload(AgendamentoServico.profissional).joinedload(ProfissionalEstetico.usuario),
+    ).filter(
+        AgendamentoServico.data_agendamento >= datetime.combine(inicio, time.min),
+        AgendamentoServico.data_agendamento <= datetime.combine(fim, time.max),
+    )
+    if unidade_filtro_id:
+        # Não há unidade_id direto no agendamento — a unidade é uma propriedade
+        # do profissional. Filtrar por unidade significa "agendamentos de
+        # profissionais que pertencem a essa unidade".
+        agendamentos_query = agendamentos_query.join(ProfissionalEstetico).filter(
+            ProfissionalEstetico.unidade_id == unidade_filtro_id
+        )
+    agendamentos_periodo = agendamentos_query.all()
+
+    contagem_status = {'agendado': 0, 'confirmado': 0, 'em_andamento': 0, 'finalizado': 0, 'cancelado': 0, 'no_show': 0}
+    faturamento_previsto = 0.0
+    faturamento_realizado = 0.0
+    faturamento_por_profissional = {}
+    faturamento_por_servico = {}
+
+    for ag in agendamentos_periodo:
+        contagem_status[ag.status] = contagem_status.get(ag.status, 0) + 1
+        preco = (ag.servico.preco or 0.0) if ag.servico else 0.0
+
+        if ag.status != 'cancelado':
+            faturamento_previsto += preco
+
+        if ag.status == 'finalizado':
+            faturamento_realizado += preco
+
+            nome_servico = ag.servico.nome_servico if ag.servico else 'Serviço removido'
+            faturamento_por_servico[nome_servico] = faturamento_por_servico.get(nome_servico, 0.0) + preco
+
+            if ag.profissional and ag.profissional.usuario:
+                nome_prof = ag.profissional.usuario.username
+                entrada = faturamento_por_profissional.setdefault(nome_prof, {
+                    'faturamento': 0.0, 'qtd': 0, 'comissao_percentual': ag.profissional.comissao_percentual,
+                })
+                entrada['faturamento'] += preco
+                entrada['qtd'] += 1
+
+    for dados in faturamento_por_profissional.values():
+        dados['comissao'] = dados['faturamento'] * (dados['comissao_percentual'] or 0) / 100
+
+    total_agendamentos = len(agendamentos_periodo)
+    taxa_cancelamento = (contagem_status['cancelado'] / total_agendamentos * 100) if total_agendamentos else 0
+    taxa_no_show = (contagem_status['no_show'] / total_agendamentos * 100) if total_agendamentos else 0
+
+    # Retenção: olha o histórico completo (não só o período do filtro) — entre os
+    # pacientes com pelo menos 1 atendimento finalizado, qual % voltou mais de uma vez?
+    finalizados_por_paciente = db.session.query(
+        AgendamentoServico.paciente_id, func.count(AgendamentoServico.id).label('qtd')
+    ).filter(AgendamentoServico.status == 'finalizado').group_by(AgendamentoServico.paciente_id).all()
+    total_pacientes_atendidos = len(finalizados_por_paciente)
+    pacientes_recorrentes = len([p for p in finalizados_por_paciente if p.qtd > 1])
+    taxa_retorno = (pacientes_recorrentes / total_pacientes_atendidos * 100) if total_pacientes_atendidos else 0
+
+    return render_template(
+        "relatorios.html",
+        inicio=inicio, fim=fim,
+        faturamento_previsto=faturamento_previsto, faturamento_realizado=faturamento_realizado,
+        faturamento_por_profissional=faturamento_por_profissional, faturamento_por_servico=faturamento_por_servico,
+        contagem_status=contagem_status, total_agendamentos=total_agendamentos,
+        taxa_cancelamento=taxa_cancelamento, taxa_no_show=taxa_no_show,
+        total_pacientes_atendidos=total_pacientes_atendidos, pacientes_recorrentes=pacientes_recorrentes,
+        taxa_retorno=taxa_retorno,
+        unidades=unidades, unidade_filtro_id=unidade_filtro_id,
+    )
 
 @app.route("/api/dashboard-stats")
 @login_required
@@ -2633,6 +3247,132 @@ def dashboard_stats():
             'data': data_servicos
         }
     })
+
+# --- API PÚBLICA (token por usuário, gerado em /perfil) ---
+#
+# Autenticação por header `Authorization: Bearer <token>`, não por sessão de
+# login — por isso não usa @login_required/current_user. O token já identifica
+# o usuário (e, por tabela, o estabelecimento dele); o contexto de tenant é
+# montado manualmente aqui dentro, com `usar_estabelecimento(...)`, da mesma
+# forma que o agendamento público faz.
+
+def requer_api_token(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth = request.headers.get('Authorization', '')
+        if not auth.startswith('Bearer '):
+            return jsonify({"erro": "Envie o header 'Authorization: Bearer <token>'."}), 401
+        token = auth[len('Bearer '):].strip()
+        if not token:
+            return jsonify({"erro": "Token vazio."}), 401
+        with usar_estabelecimento(None):
+            usuario_api = User.query.filter_by(api_token=token).first()
+        if not usuario_api:
+            return jsonify({"erro": "Token inválido."}), 401
+        g.api_user = usuario_api
+        with usar_estabelecimento(usuario_api.estabelecimento_id):
+            return f(*args, **kwargs)
+    return decorated_function
+
+@app.route("/api/v1/pacientes")
+@limiter.limit("60 per minute")
+@requer_api_token
+def api_listar_pacientes():
+    pacientes = Paciente.query.filter(Paciente.excluido_em.is_(None)).order_by(Paciente.nome_completo).all()
+    return jsonify([{
+        "id": p.id, "nome_completo": p.nome_completo, "cpf": p.cpf,
+        "telefone": p.telefone, "email": p.email,
+        "data_nascimento": _iso(p.data_nascimento), "data_cadastro": _iso(p.data_cadastro),
+    } for p in pacientes])
+
+@app.route("/api/v1/pacientes/<int:paciente_id>")
+@limiter.limit("60 per minute")
+@requer_api_token
+def api_ver_paciente(paciente_id):
+    paciente = db.session.get(Paciente, paciente_id)
+    if not paciente:
+        return jsonify({"erro": "Paciente não encontrado."}), 404
+    return jsonify({
+        "id": paciente.id, "nome_completo": paciente.nome_completo, "cpf": paciente.cpf,
+        "telefone": paciente.telefone, "email": paciente.email,
+        "data_nascimento": _iso(paciente.data_nascimento), "data_cadastro": _iso(paciente.data_cadastro),
+        "excluido": paciente.excluido_em is not None,
+    })
+
+@app.route("/api/v1/agendamentos")
+@limiter.limit("60 per minute")
+@requer_api_token
+def api_listar_agendamentos():
+    try:
+        inicio = datetime.strptime(request.args.get('inicio', ''), '%Y-%m-%d')
+    except ValueError:
+        inicio = datetime.now()
+    try:
+        fim = datetime.strptime(request.args.get('fim', ''), '%Y-%m-%d') + timedelta(days=1)
+    except ValueError:
+        fim = inicio + timedelta(days=30)
+
+    agendamentos = AgendamentoServico.query.filter(
+        AgendamentoServico.data_agendamento >= inicio,
+        AgendamentoServico.data_agendamento <= fim,
+    ).order_by(AgendamentoServico.data_agendamento).all()
+
+    return jsonify([{
+        "id": ag.id, "data_agendamento": _iso(ag.data_agendamento), "status": ag.status,
+        "paciente": {"id": ag.paciente_id, "nome": ag.paciente.nome_completo},
+        "servico": {"id": ag.servico_id, "nome": ag.servico.nome_servico} if ag.servico else None,
+        "profissional": {"id": ag.profissional_id, "nome": ag.profissional.usuario.username} if ag.profissional and ag.profissional.usuario else None,
+    } for ag in agendamentos])
+
+@app.route("/api/v1/agendamentos", methods=["POST"])
+@limiter.limit("30 per minute")
+@requer_api_token
+def api_criar_agendamento():
+    if not g.api_user.tem_permissao('agendar'):
+        return jsonify({"erro": "Este usuário não tem permissão para agendar."}), 403
+
+    dados = request.get_json(silent=True) or {}
+    paciente_id = dados.get('paciente_id')
+    profissional_id = dados.get('profissional_id')
+    servico_id = dados.get('servico_id')
+    data_agendamento_str = dados.get('data_agendamento')  # "YYYY-MM-DD HH:MM"
+
+    if not all([paciente_id, profissional_id, servico_id, data_agendamento_str]):
+        return jsonify({"erro": "Campos obrigatórios: paciente_id, profissional_id, servico_id, data_agendamento."}), 400
+    try:
+        data_agendamento = datetime.strptime(data_agendamento_str, "%Y-%m-%d %H:%M")
+    except ValueError:
+        return jsonify({"erro": "data_agendamento deve estar no formato 'YYYY-MM-DD HH:MM'."}), 400
+
+    if not db.session.get(Paciente, paciente_id):
+        return jsonify({"erro": "Paciente não encontrado."}), 404
+    if not db.session.get(ProfissionalEstetico, profissional_id):
+        return jsonify({"erro": "Profissional não encontrado."}), 404
+    if not db.session.get(ServicoEstetico, servico_id):
+        return jsonify({"erro": "Serviço não encontrado."}), 404
+
+    conflito = AgendamentoServico.query.filter(
+        AgendamentoServico.profissional_id == profissional_id,
+        AgendamentoServico.status != 'cancelado',
+        AgendamentoServico.data_agendamento == data_agendamento,
+    ).first()
+    if conflito:
+        return jsonify({"erro": "Já existe um agendamento para este profissional neste horário."}), 409
+
+    novo = AgendamentoServico(
+        paciente_id=paciente_id, profissional_id=profissional_id, servico_id=servico_id,
+        data_agendamento=data_agendamento, status='agendado',
+        observacoes=dados.get('observacoes'),
+    )
+    db.session.add(novo)
+    db.session.commit()
+    return jsonify({"id": novo.id, "status": novo.status}), 201
+
+# A API é autenticada por token (Authorization: Bearer), não por sessão de
+# navegador — clientes externos não têm cookie de sessão nem csrf_token para
+# enviar, então o CSRF do Flask-WTF (pensado para formulários HTML) não se
+# aplica aqui e precisa ser explicitamente dispensado nesta rota POST.
+csrf.exempt(api_criar_agendamento)
 
 # --- INICIALIZAÇÃO ---
 

@@ -35,6 +35,15 @@
                         <label for="historico_medico" class="form-label">Histórico Médico (Alergias, condições, etc.)</label>
                         <textarea class="form-control" id="historico_medico" name="historico_medico" rows="3">{{ paciente.historico_medico or '' }}</textarea>
                     </div>
+                    <div class="form-check mb-3">
+                        <input type="checkbox" class="form-check-input" id="consentimento_lgpd" name="consentimento_lgpd" {% if paciente.consentimento_lgpd %}checked{% endif %}>
+                        <label for="consentimento_lgpd" class="form-check-label">
+                            Paciente concordou com o tratamento de dados (LGPD)
+                            {% if paciente.data_consentimento_lgpd %}
+                                <span class="text-muted">— último registro em {{ paciente.data_consentimento_lgpd | datetimeformat }}</span>
+                            {% endif %}
+                        </label>
+                    </div>
                     <button type="submit" class="btn btn-primary">Salvar Alterações</button>
                     <a href="{{ url_for('ver_paciente', paciente_id=paciente.id) }}" class="btn btn-secondary">Cancelar</a>
                 </form>

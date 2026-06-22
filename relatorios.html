@@ -1,0 +1,145 @@
+{% extends "base_clinica.html" %}
+{% block title %}Relatórios{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2 class="mb-0"><i class="bi bi-graph-up me-2 text-primary"></i>Relatórios</h2>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-body">
+            <form method="GET" class="row g-3 align-items-end">
+                <div class="col-md-{{ '3' if unidades else '4' }}">
+                    <label class="form-label">De</label>
+                    <input type="date" class="form-control" name="inicio" value="{{ inicio.strftime('%Y-%m-%d') }}">
+                </div>
+                <div class="col-md-{{ '3' if unidades else '4' }}">
+                    <label class="form-label">Até</label>
+                    <input type="date" class="form-control" name="fim" value="{{ fim.strftime('%Y-%m-%d') }}">
+                </div>
+                {% if unidades %}
+                <div class="col-md-3">
+                    <label class="form-label">Unidade</label>
+                    <select class="form-select" name="unidade_id">
+                        <option value="">Todas</option>
+                        {% for unidade in unidades %}
+                        <option value="{{ unidade.id }}" {% if unidade_filtro_id == unidade.id %}selected{% endif %}>{{ unidade.nome }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+                <div class="col-md-{{ '3' if unidades else '4' }}">
+                    <button type="submit" class="btn btn-primary w-100"><i class="bi bi-search me-2"></i>Filtrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card text-center mb-3">
+                <div class="card-body">
+                    <h6 class="text-muted">Faturamento Realizado</h6>
+                    <h3 class="text-success">R$ {{ "%.2f"|format(faturamento_realizado) }}</h3>
+                    <small class="text-muted">Atendimentos finalizados no período</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center mb-3">
+                <div class="card-body">
+                    <h6 class="text-muted">Faturamento Previsto</h6>
+                    <h3 class="text-primary">R$ {{ "%.2f"|format(faturamento_previsto) }}</h3>
+                    <small class="text-muted">Inclui agendados/confirmados não cancelados</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center mb-3">
+                <div class="card-body">
+                    <h6 class="text-muted">Taxa de Retorno</h6>
+                    <h3 class="text-info">{{ "%.0f"|format(taxa_retorno) }}%</h3>
+                    <small class="text-muted">{{ pacientes_recorrentes }} de {{ total_pacientes_atendidos }} pacientes atendidos voltaram</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card text-center mb-3">
+                <div class="card-body">
+                    <h6 class="text-muted">Cancelamento / No-show</h6>
+                    <h3 class="text-warning">{{ "%.0f"|format(taxa_cancelamento) }}% / {{ "%.0f"|format(taxa_no_show) }}%</h3>
+                    <small class="text-muted">{{ total_agendamentos }} agendamentos no período</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header"><h5 class="mb-0">Faturamento e Comissão por Profissional</h5></div>
+                <div class="card-body p-0">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr><th>Profissional</th><th class="text-end">Atendimentos</th><th class="text-end">Faturamento</th><th class="text-end">Comissão</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for nome, dados in faturamento_por_profissional.items() %}
+                            <tr>
+                                <td>{{ nome|capitalize }}</td>
+                                <td class="text-end">{{ dados.qtd }}</td>
+                                <td class="text-end">R$ {{ "%.2f"|format(dados.faturamento) }}</td>
+                                <td class="text-end">
+                                    {% if dados.comissao_percentual %}
+                                    R$ {{ "%.2f"|format(dados.comissao) }} <span class="text-muted small">({{ dados.comissao_percentual }}%)</span>
+                                    {% else %}
+                                    <span class="text-muted">sem comissão configurada</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="4" class="text-center text-muted py-4">Nenhum atendimento finalizado no período.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header"><h5 class="mb-0">Faturamento por Serviço</h5></div>
+                <div class="card-body p-0">
+                    <table class="table table-hover mb-0">
+                        <thead class="table-light">
+                            <tr><th>Serviço</th><th class="text-end">Faturamento</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for nome, valor in faturamento_por_servico.items()|sort(attribute='1', reverse=True) %}
+                            <tr><td>{{ nome }}</td><td class="text-end">R$ {{ "%.2f"|format(valor) }}</td></tr>
+                            {% else %}
+                            <tr><td colspan="2" class="text-center text-muted py-4">Nenhum atendimento finalizado no período.</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header"><h5 class="mb-0">Agendamentos por Status (proxy de ocupação)</h5></div>
+        <div class="card-body">
+            <div class="row text-center">
+                {% for status, total in contagem_status.items() %}
+                <div class="col">
+                    <h4>{{ total }}</h4>
+                    <small class="text-muted">{{ status.replace('_', ' ')|capitalize }}</small>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
